@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>PRIMA 紋戦</title>
+  <meta name="description" content="原理を接続して自分の術を組み、ルームの乱戦で放つ。魔素を拾い、散らして奪い、散ったらすぐ入りなおす魔法の乱戦。">
+  <meta name="theme-color" content="#060508">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="PRIMA 紋戦 — 術を組み、乱戦で放て">
+  <meta property="og:description" content="原理をつないで自分だけの魔法を組み、魔導士の乱戦で放つブラウザゲーム。登録不要・すぐ遊べる。">
+  <meta property="og:image" content="assets/duel-mages-v2.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%230d0b12'/%3E%3Ccircle cx='32' cy='32' r='24' fill='none' stroke='%23ece6d8' stroke-width='2'/%3E%3Cpath d='M32 10 51 43H13Z M32 54 13 21h38Z' fill='none' stroke='%23ff5fa2' stroke-width='2'/%3E%3Ccircle cx='32' cy='32' r='5' fill='%23ffd36a'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Old+Mincho:wght@700;900&family=Zen+Kaku+Gothic+New:wght@500;700&display=swap">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <canvas id="stage" aria-label="戦場"></canvas>
+  <noscript><p class="noscript">このゲームは JavaScript で動きます。ブラウザの設定で JavaScript を有効にしてください。</p></noscript>
+
+  <!-- ─── 戦闘中の表示 ─── -->
+  <div id="hud" class="hud" hidden>
+    <section class="me" aria-label="自分の状態">
+      <div class="me-score"><b id="hudScore">0</b><small>魔素</small></div>
+      <div class="me-meta">
+        <span class="me-rank"><b id="hudRank">#–</b><small id="hudCount">/ –</small></span>
+        <span class="me-kills">撃破 <b id="hudKills">0</b></span>
+      </div>
+      <div class="me-level">
+        <span id="hudLevel">LV 0</span>
+        <div class="xp"><i id="hudXp"></i></div>
+      </div>
+    </section>
+
+    <section class="board" aria-label="順位">
+      <h2 id="boardRoom">一の間</h2>
+      <ol id="board"></ol>
+    </section>
+
+    <div id="feed" class="feed" aria-live="polite"></div>
+
+    <!-- 手ほどき：修練場で実際に操作して進む -->
+    <section id="tutor" class="tutor" hidden aria-live="polite">
+      <p class="tutor-count"><span id="tutorCount">1 / 7</span>　手ほどき</p>
+      <h2 id="tutorTitle" class="tutor-title">歩く</h2>
+      <p id="tutorText" class="tutor-text"></p>
+      <p id="tutorKeys" class="tutor-keys"></p>
+      <div class="tutor-bar"><i id="tutorBar"></i></div>
+      <div class="tutor-actions">
+        <button id="tutorGo" type="button" class="join small" hidden>戦場へ入る</button>
+        <button id="tutorSkip" type="button" class="link">手ほどきを終える</button>
+      </div>
+    </section>
+    <p id="hints" class="hints" hidden></p>
+    <div id="toast" class="toast" aria-live="polite"></div>
+
+    <section class="kit" aria-label="体と刻印">
+      <div class="bars">
+        <div class="bar hp"><i id="hpBar"></i><span>構造</span></div>
+        <div class="bar mp"><i id="mpBar"></i><span>魔力</span></div>
+      </div>
+      <button id="dodgeBtn" class="art" type="button" title="回避（右クリック / Space）">
+        <b>避</b>
+        <span>回避</span>
+      </button>
+    </section>
+
+    <!-- 術の枠：1〜4 で持ち替え、左クリックで放つ -->
+    <div id="spellBar" class="spellbar" aria-label="術"></div>
+    <div id="threadInfo" class="threads" hidden></div>
+
+    <!-- 修練場：与えた威力と、術式台への入口 -->
+    <div id="practice" class="practice" hidden>
+      <b>修練場</b>
+      <span id="practiceDps">与えた威力 0</span>
+      <span id="practiceTaken">受けた威力 0・防いだ 0</span>
+      <button id="practiceFire" type="button" class="link" aria-pressed="false" title="射（槍・魔弾・日本刀・手裏剣）と砲（光線・斧）の人形が撃ってくる">攻撃人形：止める</button>
+      <button id="practiceForge" type="button" class="join small">術式台 <small>T</small></button>
+      <button id="practiceLeave" type="button" class="link">ロビーへ <small>Esc</small></button>
+    </div>
+
+    <canvas id="mini" class="mini" width="168" height="168" aria-label="全体図"></canvas>
+
+    <div class="corner">
+      <button id="sfxBtn" type="button" class="tiny" title="効果音（M）">音</button>
+      <button id="bgmBtn" type="button" class="tiny" title="音楽（N）">曲</button>
+      <button id="voiceBtn" type="button" class="tiny" title="声（V）">声</button>
+      <button id="setBtn" type="button" class="tiny" title="設定">設</button>
+      <button id="leaveBtn" type="button" class="tiny wide" title="ロビーへ戻る（Esc）">退出</button>
+    </div>
+
+    <div id="touch" class="touch" hidden>
+      <button id="touchDodge" type="button">回避</button>
+    </div>
+  </div>
+
+  <!-- ─── ロビー ─── -->
+  <div id="lobby" class="lobby">
+    <section class="sheet entry">
+      <header class="mast">
+        <p class="mast-brand">PRIMA</p>
+        <h1 class="mast-title">紋戦</h1>
+        <p class="mast-lede">原理を接続して術を組み、乱戦で放て。</p>
+      </header>
+
+      <div id="welcome" class="welcome" hidden>
+        <p><b>はじめての方へ</b>　修練場で、動き方・術の放ち方・術の組み方を実際にやってみる（3分ほど）。</p>
+        <button id="tutorStart" type="button" class="join small">手ほどきを始める</button>
+      </div>
+
+      <div class="field">
+        <label for="nameInput">名前</label>
+        <input id="nameInput" type="text" maxlength="12" placeholder="名無し" autocomplete="off" spellcheck="false">
+      </div>
+
+      <div class="field">
+        <span class="label">光の色</span>
+        <div id="inkPick" class="ink-pick" role="radiogroup" aria-label="光の色"></div>
+      </div>
+
+      <div class="field">
+        <span class="label">紋 <small id="crestName">丸</small></span>
+        <div id="crestPick" class="crest-pick" role="radiogroup" aria-label="紋"></div>
+      </div>
+
+      <div class="field">
+        <span class="label">ルーム</span>
+        <div id="roomList" class="rooms" role="radiogroup" aria-label="ルーム"></div>
+      </div>
+
+      <div class="entry-actions">
+        <button id="joinBtn" class="join" type="button">戦場へ入る <small>Enter</small></button>
+        <button id="dojoBtn" class="join ghost" type="button">修練場で試す</button>
+      </div>
+      <p class="note">戦場の参加者はいまはBotです。オンライン対戦は準備中。</p>
+      <nav class="links">
+        <button id="howBtn" type="button" class="link">遊び方</button>
+        <button id="tutorLink" type="button" class="link">手ほどき</button>
+        <button id="settingsBtn" type="button" class="link">設定（声・音・画面）</button>
+      </nav>
+    </section>
+
+    <div class="side">
+      <section class="sheet spells" aria-label="術と叫び">
+        <div class="spells-head">
+          <h2>術</h2>
+          <button id="openForge" type="button" class="join small">術式台を開く</button>
+        </div>
+        <ol id="loadout" class="loadout"></ol>
+        <div class="cries">
+          <label for="cryWin">勝利宣言 <small>倒したときに叫ぶ</small></label>
+          <input id="cryWin" type="text" maxlength="40" autocomplete="off">
+          <label for="cryDeath">断末魔 <small>散ったときに叫ぶ</small></label>
+          <input id="cryDeath" type="text" maxlength="40" autocomplete="off">
+          <button id="cryTest" type="button" class="link">声で試す</button>
+        </div>
+      </section>
+
+      <aside class="sheet career" aria-label="位階">
+        <div class="career-head">
+          <div id="sealBig" class="seal">無</div>
+          <div>
+            <p class="career-tier" id="tierName">無紋</p>
+            <p class="career-points"><b id="pointsValue">0</b> pt</p>
+          </div>
+        </div>
+        <div class="tierbar"><i id="tierBar"></i></div>
+        <p class="tier-next" id="tierNext">次の位階まで 250 pt</p>
+        <dl class="stats">
+          <div><dt>最高魔素</dt><dd id="statBest">0</dd></div>
+          <div><dt>最高順位</dt><dd id="statPlace">–</dd></div>
+          <div><dt>通算撃破</dt><dd id="statKills">0</dd></div>
+          <div><dt>入場</dt><dd id="statRuns">0</dd></div>
+        </dl>
+        <h2 class="recent-head">最近の入場</h2>
+        <ol id="recent" class="recent"></ol>
+      </aside>
+    </div>
+  </div>
+
+  <!-- ─── 散ったとき ─── -->
+  <div id="death" class="death" hidden>
+    <section class="sheet death-sheet" role="dialog" aria-labelledby="deathTitle">
+      <h2 id="deathTitle" class="death-title">散った</h2>
+      <p id="deathBy" class="death-by"></p>
+      <p id="deathCry" class="death-cry"></p>
+      <dl class="death-stats">
+        <div><dt>最高魔素</dt><dd id="dScore">0</dd></div>
+        <div><dt>最高順位</dt><dd id="dPlace">–</dd></div>
+        <div><dt>撃破</dt><dd id="dKills">0</dd></div>
+        <div><dt>生存</dt><dd id="dTime">0:00</dd></div>
+      </dl>
+      <div class="death-points">
+        <span id="dSeal" class="seal small">無</span>
+        <p><b id="dPoints">+0</b> pt <small id="dTier">無紋</small></p>
+        <p id="dRankUp" class="rank-up" hidden>位階が上がった</p>
+      </div>
+      <div class="death-actions">
+        <button id="againBtn" class="join" type="button">もう一度入る <small>Space</small></button>
+        <button id="deathForge" class="link" type="button">術式を組み直す</button>
+        <button id="lobbyBtn" class="link" type="button">ロビーへ</button>
+      </div>
+    </section>
+  </div>
+
+  <!-- ─── 術式台 ─── -->
+  <div id="forge" class="forge" hidden>
+    <section class="sheet forge-sheet" role="dialog" aria-labelledby="forgeTitle">
+      <header class="forge-head">
+        <div>
+          <h2 id="forgeTitle">術式台</h2>
+          <p>原理と部品を接続して、1〜4 の枠に術を組む。部品が増えるほど消費と詠唱が重くなり、制御容量を超えると暴発しうる。</p>
+        </div>
+        <button id="forgeClose" type="button" class="join small">決定 <small>Esc</small></button>
+      </header>
+      <div id="forgeSlots" class="forge-slots" role="tablist" aria-label="術の枠"></div>
+      <div class="forge-grid">
+        <div class="forge-board">
+          <div class="frow"><span class="num">1</span><span class="lab">何が起こる<small>主原理</small></span><div id="fA" class="chips"></div></div>
+          <div class="frow"><span class="num">2</span><span class="lab">もう一つの性質<small>副原理</small></span><div id="fB" class="chips"></div></div>
+          <div class="frow"><span class="num">3</span><span class="lab">形<small>広がり方</small></span><div id="fForm" class="chips"></div></div>
+          <div class="frow"><span class="num">4</span><span class="lab">どう届く<small>届き方</small></span><div id="fBeh" class="chips"></div></div>
+          <div class="frow"><span class="num">5</span><span class="lab">いつ起こる<small>発動</small></span><div id="fTrig" class="chips"></div></div>
+          <div class="frow"><span class="num">6</span><span class="lab">起きた後<small>追加機能</small></span><div id="fDep" class="chips"></div></div>
+          <div class="frow"><span class="num">7</span><span class="lab">放った後<small>糸</small></span><div id="fLink" class="chips"></div></div>
+          <div class="frow"><span class="num">8</span><span class="lab">上乗せ<small>追加性質</small></span><div class="exwrap"><div id="fEx" class="chips"></div><div id="fExList" class="exlist"></div></div></div>
+          <div class="frow sliders">
+            <span class="num">強</span><span class="lab">強弱</span>
+            <div class="sl">
+              <label for="fPower">威力 <b id="fPowerV">100%</b></label><input id="fPower" type="range" min="0.7" max="1.6" step="0.05">
+              <label for="fDur">時限・持続 <b id="fDurV">100%</b></label><input id="fDur" type="range" min="0.6" max="2" step="0.1">
+              <label for="fRate">連射 <b id="fRateV">×1</b></label><input id="fRate" type="range" min="1" max="3" step="1">
+            </div>
+          </div>
+          <div class="frow"><span class="num">質</span><span class="lab">固めるか<small>固体／エネルギー</small></span><div id="fMatter" class="chips"></div></div>
+          <div class="frow"><span class="num">形</span><span class="lab">刃の形<small>速さ・当たり・衰え</small></span><div id="fShape" class="chips"></div></div>
+        </div>
+        <aside class="forge-result">
+          <canvas id="forgePreview" width="340" height="180" aria-label="術の動きの見本"></canvas>
+          <label for="fName" class="fname-lab">名前 <small>空欄なら現象の名前。付けると放つときに唱える</small></label>
+          <input id="fName" type="text" maxlength="20" placeholder="（自動）" autocomplete="off">
+          <h3 id="fResName" class="res-name">魔弾針</h3>
+          <p id="fSummary" class="res-summary"></p>
+          <p id="fResBase" class="res-base"></p>
+          <p id="fResDesc" class="res-desc"></p>
+          <p id="fResTags" class="res-tags"></p>
+          <dl class="forge-stats">
+            <div><dt>部品</dt><dd id="fParts">1</dd></div>
+            <div><dt>魔力</dt><dd id="fCost">0</dd></div>
+            <div><dt>詠唱</dt><dd id="fWind">0</dd></div>
+            <div><dt>威力</dt><dd id="fPow">0</dd></div>
+            <div><dt>遠くで</dt><dd id="fReach">－</dd></div>
+          </dl>
+          <p class="cap-head">制御容量と暴発</p>
+          <p id="fCap" class="capline"></p>
+          <p id="forgeMsg" class="forge-msg" aria-live="polite"></p>
+          <button id="fTry" type="button" class="join small">修練場で試す</button>
+        </aside>
+      </div>
+      <p id="fHelp" class="forge-help">部品にふれると、その意味がここに出る</p>
+      <div class="forge-foot">
+        <span class="lab">達人の流派<small>Bot が修める4つの術を丸ごと読み込む</small></span>
+        <div id="fSchools" class="chips presets"></div>
+        <span class="lab">達人の術</span>
+        <div id="fMasters" class="chips presets"></div>
+        <span class="lab">作例</span>
+        <div id="fPresets" class="chips presets"></div>
+        <div class="foot-links">
+          <button id="fReset" type="button" class="link">初期の4つに戻す</button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- ─── 遊び方 ─── -->
+  <div id="how" class="how" hidden>
+    <section class="sheet how-sheet" role="dialog" aria-labelledby="howTitle">
+      <h2 id="howTitle">遊び方</h2>
+      <ul id="howRules" class="how-rules"></ul>
+      <table class="how-keys"><tbody id="howKeys"></tbody></table>
+      <h3>六原理（単一原理で放つと）</h3>
+      <ul id="howPrinciples" class="how-principles"></ul>
+      <button id="howClose" class="join" type="button">閉じる</button>
+    </section>
+  </div>
+
+  <!-- ─── 設定（声・音・画面） ─── -->
+  <div id="settings" class="settings" hidden>
+    <section class="sheet settings-sheet" role="dialog" aria-labelledby="settingsTitle">
+      <h2 id="settingsTitle">設定</h2>
+      <div class="set-group">
+        <label class="set-lab" for="setLang">言語 <small>Language</small></label>
+        <select id="setLang"></select>
+      </div>
+      <div class="set-group">
+        <span class="set-lab">声</span>
+        <div id="setVoiceMode" class="seg" role="radiogroup" aria-label="声">
+          <button type="button" role="radio" data-k="off">なし</button>
+          <button type="button" role="radio" data-k="name">技名だけ</button>
+          <button type="button" role="radio" data-k="all">技名と叫び</button>
+        </div>
+        <p class="set-note">名前を付けた術を放つとき、その技名を叫ぶ。「技名と叫び」は勝利宣言と断末魔も声に出す。</p>
+      </div>
+      <div class="set-group">
+        <label class="set-lab" for="setVoiceName">声の種類</label>
+        <div class="set-line">
+          <select id="setVoiceName"></select>
+          <button id="setVoiceTest" type="button" class="link">試す</button>
+        </div>
+        <p id="setVoiceNote" class="set-note">「Natural」「Online」と付いた声がいちばん人に近い（Edge・Chrome で使える）。</p>
+      </div>
+      <div class="set-group">
+        <label class="set-lab" for="setSfxVol">効果音 <b id="setSfxV">80</b></label>
+        <input id="setSfxVol" type="range" min="0" max="1" step="0.05">
+      </div>
+      <div class="set-group">
+        <label class="set-lab" for="setBgmVol">音楽 <b id="setBgmV">55</b></label>
+        <div class="set-line">
+          <input id="setBgmVol" type="range" min="0" max="1" step="0.05">
+          <button id="setNextTrack" type="button" class="link">曲を変える <small>B</small></button>
+        </div>
+      </div>
+      <div class="set-group">
+        <label class="set-check"><input id="setBloom" type="checkbox"> 光のにじみ <small>術の光がまわりへにじむ。重いときは切る</small></label>
+      </div>
+      <button id="setClose" class="join" type="button">閉じる <small>Esc</small></button>
+    </section>
+  </div>
+
+  <audio id="bgm" preload="none"></audio>
+
+  <script src="data.js"></script>
+  <script src="sim.js"></script>
+  <script src="lang.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>
