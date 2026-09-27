@@ -78,6 +78,8 @@ function defaults() {
     voiceMode: 'all', voiceURI: '', sfxVol: 0.8, bgmVol: 0.55, bloom: true, lastTrack: '',
     // 言語：auto（ブラウザに合わせる）か ja / en / zh / ko
     lang: 'auto',
+    // 画質：auto（スマホと重い端末は軽く）・high・low
+    quality: 'auto',
     // 手ほどきを終えたか（初めての人にだけロビーで案内する）
     tutorial: false
   };
@@ -111,8 +113,15 @@ function saveProfile() {
 const canvas = $('stage'), ctx = canvas.getContext('2d');
 const mini = $('mini'), mctx = mini.getContext('2d');
 let vw = 1280, vh = 800, dpr = 1;
+// 画質：low のときは解像度を1倍に抑え、靄・灰・色調・光のにじみ・床の照り返しを省き、火花を減らす
+let LOW = false, perfLow = false;
+function applyQuality() {
+  const q = profile.quality || 'auto';
+  LOW = q === 'low' || (q === 'auto' && (perfLow || touchy()));
+  resize();
+}
 function resize() {
-  dpr = Math.min(2, window.devicePixelRatio || 1);
+  dpr = LOW ? 1 : Math.min(2, window.devicePixelRatio || 1);
   vw = window.innerWidth || 1280; vh = window.innerHeight || 800;
   canvas.width = Math.round(vw * dpr); canvas.height = Math.round(vh * dpr);
 }
@@ -266,7 +275,8 @@ function drawCrest(g, key, r, color) {
 // ═══ 05. 入力 ═══════════════════════════════════════════════════
 const keys = new Set();
 const mouse = { x: vw / 2 + 100, y: vh / 2, down: false };
-const touch = { move: null, aim: null, active: false };
+// タッチ：左半分は移動のスティック、右半分は狙いのスティック（はじいた向きへ放つ。触れて離すだけなら近くの敵へ自動で狙う）
+const touch = { move: null, aim: null, active: false, tap: 0, target: null };
 const typing = () => { const a = document.activeElement; return !!a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.tagName === 'SELECT') && a.type !== 'range' && a.type !== 'checkbox'; };
 const MOVE_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
 // 術式台を開ける場面：ロビー・散った後・修練場の中
@@ -316,32 +326,58 @@ const touchy = () => touch.active || (typeof navigator !== 'undefined' && naviga
 canvas.addEventListener('wheel', e => { if (mode !== 'play') return; e.preventDefault(); selectSlot((heroSlot + (e.deltaY > 0 ? 1 : 3)) % 4); }, { passive: false });
 let heroSlot = 0;
 function selectSlot(i) { if (heroSlot !== i) sfx('select', 1, i); heroSlot = i; }
-// タッチ：左半分でスティック、右半分で狙って放つ
 canvas.addEventListener('touchstart', e => {
   unlockAudio();
-  touch.active = true; $('touch').hidden = mode !== 'play';
+  if (!touch.active) { touch.active = true; document.body.classList.add('touch-ui'); applyQuality(); }
+  $('touch').hidden = mode !== 'play';
   for (const t of e.changedTouches) {
-    if (t.clientX < vw * 0.45 && !touch.move) touch.move = { id: t.identifier, ox: t.clientX, oy: t.clientY, x: t.clientX, y: t.clientY };
-    else if (!touch.aim) touch.aim = { id: t.identifier, x: t.clientX, y: t.clientY };
+    const st = { id: t.identifier, ox: t.clientX, oy: t.clientY, x: t.clientX, y: t.clientY, t0: clock, far: 0 };
+    if (t.clientX < vw * 0.5 && !touch.move) touch.move = st;
+    else if (!touch.aim) touch.aim = st;
   }
   e.preventDefault();
 }, { passive: false });
 canvas.addEventListener('touchmove', e => {
   for (const t of e.changedTouches) {
-    if (touch.move && t.identifier === touch.move.id) { touch.move.x = t.clientX; touch.move.y = t.clientY; }
-    if (touch.aim && t.identifier === touch.aim.id) { touch.aim.x = t.clientX; touch.aim.y = t.clientY; }
+    for (const st of [touch.move, touch.aim]) if (st && t.identifier === st.id) { st.x = t.clientX; st.y = t.clientY; st.far = Math.max(st.far, hyp(st.x - st.ox, st.y - st.oy)); }
   }
   e.preventDefault();
 }, { passive: false });
 const touchEnd = e => {
   for (const t of e.changedTouches) {
     if (touch.move && t.identifier === touch.move.id) touch.move = null;
-    if (touch.aim && t.identifier === touch.aim.id) touch.aim = null;
+    if (touch.aim && t.identifier === touch.aim.id) {
+      // 触れて離しただけ（ほとんど動かさない）なら、近くの敵へ一回放つ
+      if (touch.aim.far < STICK_DEAD && clock - touch.aim.t0 < 0.35) touch.tap = 0.2;
+      touch.aim = null;
+    }
   }
 };
 canvas.addEventListener('touchend', touchEnd);
 canvas.addEventListener('touchcancel', touchEnd);
 $('touchDodge').addEventListener('pointerdown', e => { e.preventDefault(); const me = S.hero(world); if (me) me.input.dodge = true; });
+$('touchDetonate').addEventListener('pointerdown', e => { e.preventDefault(); const me = S.hero(world); if (me) me.input.detonate = true; });
+$('touchRecall').addEventListener('pointerdown', e => { e.preventDefault(); const me = S.hero(world); if (me) me.input.recall = true; });
+// スティックの遊びと、指を倒しきる距離（画面の点）
+const STICK_DEAD = 16, STICK_FULL = 70;
+// 起動時の画質（スマホなら最初から軽く）
+if (touchy()) document.body.classList.add('touch-ui');
+applyQuality();
+// 狙いの補助：向き（あれば）に近く、届く範囲にいる相手を選び、動く先を読んで狙う
+function autoTarget(me, ang) {
+  let best = null, bs = 1e9;
+  for (const u of world.units) {
+    if (!u.alive || u === me) continue;
+    const dx = u.x - me.x, dy = u.y - me.y, d = hyp(dx, dy);
+    if (d > 820) continue;
+    let sc = d;
+    if (ang !== undefined) { const off = Math.abs(Math.atan2(Math.sin(Math.atan2(dy, dx) - ang), Math.cos(Math.atan2(dy, dx) - ang))); if (off > 0.42) continue; sc += off * 900; }
+    if (sc < bs) { bs = sc; best = u; }
+  }
+  if (!best) return null;
+  const lead = hyp(best.x - me.x, best.y - me.y) / 800;
+  return { u: best, x: best.x + best.vx * lead, y: best.y + best.vy * lead };
+}
 
 function heroInput(me) {
   const ix = me.input;
@@ -353,12 +389,26 @@ function heroInput(me) {
   let cast = mouse.down, aimAt = screenToWorld(mouse.x, mouse.y);
   if (touch.move) {
     const dx = touch.move.x - touch.move.ox, dy = touch.move.y - touch.move.oy, d = hyp(dx, dy);
-    if (d > 8) { mx = dx / Math.max(d, 60); my = dy / Math.max(d, 60); }
+    if (d > STICK_DEAD * 0.5) { mx = dx / Math.max(d, STICK_FULL); my = dy / Math.max(d, STICK_FULL); }
   }
-  if (touch.aim) { aimAt = screenToWorld(touch.aim.x, touch.aim.y); cast = true; }
+  touch.target = null;
+  if (touch.active) {
+    const st = touch.aim;
+    if (st && hyp(st.x - st.ox, st.y - st.oy) >= STICK_DEAD) {
+      // 狙いのスティックを倒している：その向きへ放ち続ける。倒した向きの近くに敵がいれば、そちらへ吸い付く
+      const dx = st.x - st.ox, dy = st.y - st.oy, d = hyp(dx, dy), ang = Math.atan2(dy, dx);
+      const tg = autoTarget(me, ang), reach = 160 + Math.min(1, d / STICK_FULL) * 480;
+      aimAt = tg || { x: me.x + Math.cos(ang) * reach, y: me.y + Math.sin(ang) * reach };
+      touch.target = tg; cast = true;
+    } else if (st || touch.tap > 0) {
+      // 触れているだけ・軽く叩いた：いちばん近い敵へ自動で狙って放つ（敵がいなければ放たない）
+      const tg = autoTarget(me);
+      if (tg) { aimAt = tg; touch.target = tg; cast = true; }
+      else if (mx || my) aimAt = { x: me.x + mx * 300, y: me.y + my * 300 };
+    } else if (mx || my) aimAt = { x: me.x + mx * 300, y: me.y + my * 300 };
+  }
   ix.mx = mx; ix.my = my;
-  if (touch.active && !touch.aim && (mx || my)) { ix.aim = Math.atan2(my, mx); aimAt = { x: me.x + mx * 300, y: me.y + my * 300 }; }
-  else ix.aim = Math.atan2(aimAt.y - me.y, aimAt.x - me.x);
+  ix.aim = Math.atan2(aimAt.y - me.y, aimAt.x - me.x);
   ix.tx = aimAt.x; ix.ty = aimAt.y;
   ix.cast = cast;
   ix.slot = heroSlot;
@@ -775,7 +825,8 @@ function updateFx(dt) {
     }
     if (p.spin) p.rot += p.spin * dt;
   }
-  if (parts.length > 1100) parts.splice(0, parts.length - 1100);
+  const cap = LOW ? 380 : 1100;
+  if (parts.length > cap) parts.splice(0, parts.length - cap);
   for (let i = smokes.length - 1; i >= 0; i--) { const m = smokes[i]; m.t += dt; m.x += m.vx * dt; m.y += m.vy * dt; m.vx *= Math.pow(0.4, dt); m.vy *= Math.pow(0.5, dt); if (m.t > m.life) smokes.splice(i, 1); }
   screenFx.a = Math.max(0, screenFx.a - dt * 0.9);
   for (let i = castCircles.length - 1; i >= 0; i--) { const c = castCircles[i]; c.t += dt; const u = S.unitById(world, c.id); if (c.t > c.life || !u || !u.alive) castCircles.splice(i, 1); }
@@ -809,6 +860,7 @@ function updateFx(dt) {
   updateAsh(dt);
   updateThunder(dt);
   pickupT -= dt; if (pickupT <= 0) pickupCombo = 0;
+  touch.tap = Math.max(0, touch.tap - dt);
 }
 
 // ═══ 07. 音と声 ═════════════════════════════════════════════════
@@ -1130,7 +1182,7 @@ function draw() {
 
   // 術の光が床を照らす
   updateTrails();
-  drawLights(inView);
+  if (!LOW) drawLights(inView);
   // 床の跡：焦げ（暗く）・亀裂 → 焼きついた紋（光る）
   for (const d of decals) if (d.kind === 'scorch' && inView(d.x, d.y, d.r * 1.4)) drawScorch(d);
   for (const d of decals) if (d.kind === 'crack' && inView(d.x, d.y, d.r * 1.6)) drawCrack(d);
@@ -1138,8 +1190,8 @@ function draw() {
   for (const d of decals) if (d.kind === 'sigil' && inView(d.x, d.y, d.r * 1.6)) drawSigil(d);
   ctx.globalCompositeOperation = 'source-over';
 
-  // 床を這う闇の靄
-  drawFog(L, T, Rt, B);
+  // 床を這う闇の靄（軽い画質では省く）
+  if (!LOW) drawFog(L, T, Rt, B);
   for (const s of world.springs) if (inView(s.x, s.y, 260)) drawSpring(s);
   // 領域（残留・吸魔・結界・周回）は床に描く
   for (const zo of world.zones) if (inView(zo.x, zo.y, zo.zr + 40)) drawZone(zo);
@@ -1178,10 +1230,12 @@ function draw() {
   ctx.globalAlpha = 1;
   // 色調：冷たく沈んだ色に寄せる（闇の世界。光だけがあとでにじむ）
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.globalCompositeOperation = 'multiply';
-  ctx.fillStyle = GRADE;
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.globalCompositeOperation = 'source-over';
+  if (!LOW) {
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.fillStyle = GRADE;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.globalCompositeOperation = 'source-over';
+  }
   // 光のにじみ：ここまでに描いた明るい光だけを拾ってぼかし、上から足す（名前や吹き出しはにじませない）
   drawBloom();
   toWorld();
@@ -1258,7 +1312,7 @@ function updateThunder(dt) {
 const bloomCv = document.createElement('canvas'), bctx = bloomCv.getContext('2d');
 const BLOOM_OK = !!bctx && typeof bctx.filter === 'string';
 function drawBloom() {
-  if (!profile.bloom || !BLOOM_OK) return;
+  if (!profile.bloom || !BLOOM_OK || LOW) return;
   const w = Math.max(2, Math.round(vw / 4)), h = Math.max(2, Math.round(vh / 4));
   if (bloomCv.width !== w || bloomCv.height !== h) { bloomCv.width = w; bloomCv.height = h; }
   bctx.globalCompositeOperation = 'copy';
@@ -1307,9 +1361,11 @@ function drawArena(inView) {
     ctx.strokeStyle = rgba(BONE, inC ? 0.7 : 0.22); ctx.lineWidth = inC ? 2.5 : 1.2;
     ctx.setLineDash([10, 8]); ctx.lineDashOffset = t * 18;
     ctx.beginPath(); ctx.arc(0, 0, W.center.r, 0, TAU); ctx.stroke(); ctx.setLineDash([]);
-    ctx.font = `700 15px 'Zen Kaku Gothic New', sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillStyle = rgba(BONE, inC ? 0.9 : 0.4);
-    ctx.fillText(L('要の陣 ― 制御容量 +{0}', W.center.capacity), 0, W.center.r + 18);
+    if (me0 && hyp(me0.x, me0.y) < W.center.r + 260) {
+      ctx.font = `700 15px 'Zen Kaku Gothic New', sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = rgba(BONE, inC ? 0.9 : 0.4);
+      ctx.fillText(L('要の陣 ― 制御容量 +{0}', W.center.capacity), 0, W.center.r + 18);
+    }
   }
   const me = world.units.find(u => u.id === world.heroId && u.alive);
   for (const n of nodes) {
@@ -1323,14 +1379,19 @@ function drawArena(inView) {
     ctx.setLineDash([12, 8]); ctx.lineDashOffset = -t * 20;
     ctx.beginPath(); ctx.arc(0, 0, W.node.r, 0, TAU); ctx.stroke();
     ctx.setLineDash([]);
-    ctx.font = `700 15px 'Zen Kaku Gothic New', sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillStyle = rgba(c, on ? 0.95 : 0.5);
-    ctx.fillText(L('{0}の節点 ― {0}の術が強まり、魔力が湧く', p.name), 0, W.node.r + 18);
-    ctx.globalCompositeOperation = 'lighter';
-    ctx.globalAlpha = (on ? 0.5 : 0.22) + Math.sin(t * 1.3 + n.x) * 0.05;
-    ctx.drawImage(glow(p.ink), -260, -260, 520, 520);
-    ctx.globalAlpha = 1;
-    ctx.globalCompositeOperation = 'source-over';
+    if (me && hyp(me.x - n.x, me.y - n.y) < W.node.r + 260) {
+      ctx.font = `700 15px 'Zen Kaku Gothic New', sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = rgba(c, on ? 0.95 : 0.5);
+      ctx.fillText(L('{0}の節点 ― {0}の術が強まり、魔力が湧く', p.name), 0, W.node.r + 18);
+    }
+    // 節点の大きな光は塗る面積が広く重いので、軽い画質では省く
+    if (!LOW) {
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = (on ? 0.5 : 0.22) + Math.sin(t * 1.3 + n.x) * 0.05;
+      ctx.drawImage(glow(p.ink), -260, -260, 520, 520);
+      ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = 'source-over';
+    }
     ctx.rotate(t * 0.12);
     ctx.strokeStyle = rgba(c, 0.45); ctx.lineWidth = 2;
     ctx.beginPath(); ctx.arc(0, 0, 110, 0, TAU); ctx.stroke();
@@ -2763,7 +2824,7 @@ function drawEdge(L, T, R, B) {
 }
 // 画面の縁：暗く落とし、体力が減ると薔薇色に染まる。照準も描く
 function drawScreenOverlay() {
-  drawAsh();
+  if (!LOW) drawAsh();
   ctx.fillStyle = getVignette();
   ctx.fillRect(0, 0, vw, vh);
   if (screenFx.a > 0.005) {
@@ -2798,6 +2859,29 @@ function drawScreenOverlay() {
     ctx.fillStyle = hex(u.ink);
     ctx.beginPath(); ctx.moveTo(10 * big, 0); ctx.lineTo(-6 * big, -7 * big); ctx.lineTo(-3 * big, 0); ctx.lineTo(-6 * big, 7 * big); ctx.closePath(); ctx.fill();
     ctx.restore();
+  }
+  if (touch.active) {
+    // 仮想スティック：触れた所に土台の輪、指の位置に芯
+    const stick = (st, col) => {
+      if (!st) return;
+      const dx = st.x - st.ox, dy = st.y - st.oy, d = hyp(dx, dy), k = d > STICK_FULL ? STICK_FULL / d : 1;
+      ctx.save();
+      ctx.strokeStyle = rgba(BONE, 0.35); ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(st.ox, st.oy, STICK_FULL, 0, TAU); ctx.stroke();
+      ctx.fillStyle = rgba(col, 0.35); ctx.strokeStyle = rgba(col, 0.9);
+      ctx.beginPath(); ctx.arc(st.ox + dx * k, st.oy + dy * k, 26, 0, TAU); ctx.fill(); ctx.stroke();
+      ctx.restore();
+    };
+    stick(touch.move, hex(BONE));
+    stick(touch.aim, S.recipeResult(me.spells[heroSlot]).color);
+    // 狙っている相手に印
+    if (touch.target && touch.target.u.alive) {
+      const tx = (touch.target.u.x - cam.x) * cam.z + vw / 2, ty = (touch.target.u.y - cam.y) * cam.z + vh / 2;
+      ctx.save(); ctx.translate(tx, ty); ctx.rotate(world.t * 2);
+      ctx.strokeStyle = rgba(S.recipeResult(me.spells[heroSlot]).color, 0.95); ctx.lineWidth = 2;
+      for (let i = 0; i < 4; i++) { ctx.beginPath(); ctx.arc(0, 0, 30, i * TAU / 4 + 0.2, i * TAU / 4 + 1.2); ctx.stroke(); }
+      ctx.restore();
+    }
   }
   if (!touch.active) {
     // 照準：いま持っている術の色の小さな陣
@@ -2861,6 +2945,7 @@ function updateHud(dt) {
   const linked = S.linkedOf(world, me);
   const cmd = linked.filter(o => o.r && o.r.trigger === 'command').length;
   $('threadInfo').hidden = !linked.length;
+  $('touchDetonate').hidden = !cmd; $('touchRecall').hidden = !linked.length;
   if (linked.length) $('threadInfo').innerHTML = `<b>${L('糸 {0}', linked.length)}</b>${cmd ? `<span>${L('F 指示起爆（{0}）', cmd)}</span>` : ''}<span>${L('G 回収')}</span>`;
   // 回避
   $('dodgeBtn').style.setProperty('--cd', me.dodgeCd > 0 ? (me.dodgeCd / W.dodge.cd).toFixed(3) : 0);
@@ -3017,6 +3102,8 @@ function buildSettings() {
   $('setLang').innerHTML = [`<option value="auto">${L('自動（ブラウザに合わせる）')}</option>`]
     .concat(Object.keys(LANG_NAMES).filter(k => k === 'ja' || LANGS[k]).map(k => `<option value="${k}">${LANG_NAMES[k]}</option>`)).join('');
   $('setLang').addEventListener('change', () => { profile.lang = $('setLang').value; saveProfile(); location.reload(); });
+  $('setQuality').innerHTML = [['auto', L('自動（スマホや重い端末は軽く）')], ['high', L('高い')], ['low', L('軽い（スマホ向け）')]].map(([v, t]) => `<option value="${v}">${t}</option>`).join('');
+  $('setQuality').addEventListener('change', () => { profile.quality = $('setQuality').value; perfLow = false; saveProfile(); applyQuality(); });
 }
 function openSettings() { unlockAudio(); syncSettings(); $('settings').hidden = false; $('setClose').focus(); }
 function closeSettings() { $('settings').hidden = true; }
@@ -3034,6 +3121,7 @@ function syncSettings() {
   $('setBloom').checked = !!profile.bloom;
   $('setBloom').disabled = !BLOOM_OK;
   $('setLang').value = profile.lang || 'auto';
+  $('setQuality').value = profile.quality || 'auto';
 }
 function syncLobby() {
   for (const b of $('inkPick').children) b.setAttribute('aria-checked', b.dataset.k === profile.ink);
@@ -3510,7 +3598,9 @@ function frame(now) {
   if (mode === 'play' && !perf.done && raw < 0.5) {
     perf.t += raw; perf.n++;
     if (perf.t > 5) {
-      if (perf.t / perf.n > 1 / 36 && profile.bloom) { profile.bloom = false; saveProfile(); toast(L('光のにじみを切った'), L('動きが重かったため。設定で戻せる')); }
+      if (perf.t / perf.n > 1 / 36 && profile.bloom && !LOW) { profile.bloom = false; saveProfile(); toast(L('光のにじみを切った'), L('動きが重かったため。設定で戻せる')); }
+      // それでも重い（平均 40fps を下回る）なら、画質を「軽い」に落とす
+      else if (perf.t / perf.n > 1 / 40 && !LOW && (profile.quality || 'auto') === 'auto') { perfLow = true; applyQuality(); toast(L('画質を軽くした'), L('動きが重かったため。設定で戻せる')); }
       perf.done = true;
     }
   }

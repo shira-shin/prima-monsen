@@ -565,3 +565,39 @@ button { cursor: pointer; }
 .chips .chip.school { border-color: rgba(216, 176, 106, .55); color: var(--gold); }
 .forge-foot #fSchools, .forge-foot #fMasters { grid-column: 2 / 4; }
 @media (max-width: 900px) { .forge-foot #fSchools, .forge-foot #fMasters { grid-column: auto; } }
+
+/* ─── 指で遊ぶ端末（スマホ・タブレット）：画面を広く空け、要るものだけ小さく置く ───
+   左半分・右半分は仮想スティックの場所なので、表示は上の端と下の中央に寄せる */
+.touch-ui .board, .touch-ui .feed, .touch-ui .hints, .touch-ui .threads, .touch-ui .kit .art { display: none; }
+.touch-ui .me { left: 10px; top: max(8px, env(safe-area-inset-top, 0px)); min-width: 0; gap: 1px; }
+.touch-ui .me-score b { font-size: 24px; }
+.touch-ui .me-score small, .touch-ui .me-level .xp { display: none; }
+.touch-ui .me-meta { gap: 8px; font-size: 11px; }
+.touch-ui .me-rank b { font-size: 15px; }
+.touch-ui .me-kills b { font-size: 13px; }
+.touch-ui .me-level { font-size: 10px; }
+.touch-ui .kit { left: 10px; top: calc(max(8px, env(safe-area-inset-top, 0px)) + 70px); bottom: auto; }
+.touch-ui .bars { width: 130px; gap: 4px; padding-top: 10px; }
+.touch-ui .bar { height: 5px; }
+.touch-ui .mini { right: 8px; top: max(8px, env(safe-area-inset-top, 0px)); bottom: auto; width: 72px; height: 72px; }
+.touch-ui .corner { right: 86px; top: max(8px, env(safe-area-inset-top, 0px)); bottom: auto; display: flex; }
+.touch-ui .corner .tiny { width: 30px; height: 28px; font-size: 12px; }
+.touch-ui .spellbar {
+  left: 50%; right: auto; transform: translateX(-50%); bottom: max(8px, env(safe-area-inset-bottom, 0px));
+  grid-template-columns: repeat(4, minmax(0, 76px)); gap: 4px;
+}
+.touch-ui .slot { padding: 5px 6px; }
+.touch-ui .slot .nm { font-size: 11px; padding-right: 10px; }
+.touch-ui .slot .meta { display: none; }
+.touch-ui .slot .key { font-size: 10px; right: 4px; top: 3px; }
+.touch-ui .slot.on { transform: translateY(-2px); }
+.touch-ui .touch { right: 10px; bottom: calc(max(8px, env(safe-area-inset-bottom, 0px)) + 58px); gap: 8px; }
+.touch-ui .touch button { width: 58px; height: 58px; font-size: 14px; }
+.touch-ui .practice { top: max(6px, env(safe-area-inset-top, 0px)); padding: 4px 8px; gap: 8px; max-width: calc(100vw - 260px); }
+.touch-ui .practice b { font-size: 12px; }
+.touch-ui .practice span, .touch-ui .practice .link { font-size: 11px; }
+.touch-ui .toast { font-size: 22px; top: 16%; }
+.touch-ui .toast small { font-size: 11px; }
+.touch-ui .tutor { max-width: min(360px, calc(100vw - 20px)); font-size: 12px; }
+/* 術式台：指で押しやすいように部品のボタンを大きく */
+.touch-ui .chip { min-height: 38px; }
