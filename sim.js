@@ -360,6 +360,9 @@ function normRecipe(r) {
   o.power = clamp(Number(o.power) || 1, R.power[0], R.power[1]);
   o.duration = clamp(Number(o.duration) || 1, R.duration[0], R.duration[1]);
   o.rate = clamp(Math.round(Number(o.rate) || 1), R.rate[0], R.rate[1]);
+  // 飛翔速度は部品に数えない。瞬時の光線・自位置・周回には適用しない。
+  o.velocity = Number.isFinite(Number(o.velocity)) ? clamp(Number(o.velocity), ...R.velocity) : 1;
+  if (!['project', 'homing', 'lob', 'sow', 'relay'].includes(o.behavior)) o.velocity = 1;
   if (o.behavior === 'orbit') { o.trigger = 'contact'; if (!['linger', 'siphon'].includes(o.deploy)) o.deploy = 'single'; }
   if (o.behavior === 'beam') { o.form = 'line'; o.trigger = 'contact'; o.deploy = 'single'; }
   if (!RAPID_OK.includes(o.behavior)) o.rate = 1;
@@ -372,7 +375,7 @@ function normRecipe(r) {
   if (o.matter === 'perfect' && !perfectOk(o)) o.matter = o.a === 'bind' || o.b === 'bind' ? 'solid' : 'energy';
   return {
     a: o.a, b: o.b, form: o.form, behavior: o.behavior, trigger: o.trigger, deploy: o.deploy, link: o.link, extras: o.extras,
-    power: o.power, duration: o.duration, rate: o.rate, matter: o.matter, visualShape: o.visualShape, customName: cleanName(o.customName || o.name)
+    power: o.power, duration: o.duration, rate: o.rate, velocity: o.velocity, matter: o.matter, visualShape: o.visualShape, customName: cleanName(o.customName || o.name)
   };
 }
 const pairKey = r => r.b === 'none' ? `${r.a}|none` : [r.a, r.b].sort().join('|');
@@ -448,6 +451,7 @@ function baseCost(r) {
   // 単調な術ほど燃費が良い
   sum *= 1 - R.purity.costCut * Math.max(0, R.purity.base - partCount(r));
   sum *= Math.pow(r.power, 1.6);
+  sum *= 1 + R.velocityCost * Math.max(0, (r.velocity || 1) ** 2 - 1);
   if (r.trigger === 'fuse') sum *= clamp(1.5 - r.duration * .5, .8, 1.3);
   else if (['linger', 'siphon'].includes(r.deploy) || r.behavior === 'orbit') sum *= clamp(.7 + r.duration * .3, .7, 1.6);
   return sum;
@@ -523,7 +527,7 @@ function fire(w, u, r, cost) {
   const boost = nodeBoost(w, u, r);
   const common = { owner: u.id, col: res.color, r, res, dmg: hitBase(u, r, res) * (boost ? W.node.power : 1), radius: fm.radius * (r.deploy === 'burst' ? 1.5 : 1), hold, linked: hold, cost, matter: r.matter, cast: w.nextId++ };
   const aim = u.aim, ix = u.input;
-  w.events.push({ type: 'cast', id: u.id, name: spellName(r), named: !!r.customName, a: r.a, beh: r.behavior, form: r.form, x: u.x, y: u.y, ink: u.ink, col: res.color, aim, rtype: res.type, matter: r.matter, node: boost });
+  w.events.push({ type: 'cast', id: u.id, name: spellName(r), named: !!r.customName, a: r.a, b: r.b, power: r.power, shape: visualShapeOf(r), beh: r.behavior, form: r.form, x: u.x, y: u.y, ink: u.ink, col: res.color, aim, rtype: res.type, matter: r.matter, node: boost });
   // 位相化：放った直後の攻撃をすり抜ける
   if (res.type === 'veil') u.phaseT = Math.max(u.phaseT, 0.6 * r.duration);
   // 強化術：単一原理を周回で放つと、自分の紋の魔力を体へ直接書き込む（旧版の加速・硬化・活性）
@@ -540,7 +544,7 @@ function fire(w, u, r, cost) {
   switch (r.behavior) {
     case 'project': case 'homing': {
       const s = spawnFlyer(w, u, common, aim, bh, r.behavior === 'homing');
-      if (r.trigger === 'fuse') s.stopAt = Math.min(bh.range, hyp(ix.tx - u.x, ix.ty - u.y));
+      if (r.trigger === 'fuse' || (r.trigger === 'contact' && STRUCTURE.includes(res.type))) s.stopAt = Math.min(bh.range, hyp(ix.tx - u.x, ix.ty - u.y));
       break;
     }
     case 'relay':
@@ -548,7 +552,7 @@ function fire(w, u, r, cost) {
       break;
     case 'lob': {
       const p = reachPoint(u, ix.tx, ix.ty, bh.range), d = hyp(p.x - u.x, p.y - u.y);
-      w.spells.push({ ...common, id: w.nextId++, kind: 'lob', state: 'fly', sx: u.x, sy: u.y, x: u.x, y: u.y, tx: p.x, ty: p.y, t: 0, dur: Math.max(0.25, d / bh.speed), age: 0, wait: 0, fuseT: R.fuse * r.duration, shape: visualShapeOf(r), hit: [], vx: p.x - u.x, vy: p.y - u.y });
+      w.spells.push({ ...common, id: w.nextId++, kind: 'lob', state: 'fly', sx: u.x, sy: u.y, x: u.x, y: u.y, tx: p.x, ty: p.y, t: 0, dur: Math.max(0.25, d / (bh.speed * r.velocity)), age: 0, wait: 0, fuseT: R.fuse * r.duration, shape: visualShapeOf(r), hit: [], vx: p.x - u.x, vy: p.y - u.y });
       break;
     }
     case 'sow': {
@@ -575,7 +579,7 @@ function fire(w, u, r, cost) {
 // 飛ぶ術式はすべて同じ項目で作る（passed：貫いた結界、bounce：跳ね返れる回数、t / life / ang / orad / hp / hitT は周回の刃だけが使う）
 function spawnFlyer(w, u, common, a, bh, homing) {
   const sh = shapeOf(common.r), mt = matterOf(common.r);
-  const speed = bh.speed * (common.res.type === 'bolt' ? 1.1 : 1) * sh.speed * mt.speed;
+  const speed = bh.speed * (common.res.type === 'bolt' ? 1.1 : 1) * sh.speed * mt.speed * common.r.velocity;
   const s = {
     ...common, id: w.nextId++, kind: 'proj', state: 'fly',
     x: u.x + Math.cos(a) * (u.r + 4), y: u.y + Math.sin(a) * (u.r + 4),
@@ -790,9 +794,13 @@ function tickSpell(w, s, dt) {
         return;
       }
     }
-    s.x += s.vx * dt; s.y += s.vy * dt; s.traveled += hyp(s.vx, s.vy) * dt;
-    resonate(w, s);
-    flyCollide(w, s);
+    // 細い壁や高速の槍を飛び越さないよう、移動中も接触を調べる。
+    const steps = Math.max(1, Math.ceil(hyp(s.vx, s.vy) * dt / Math.max(8, s.size)));
+    for (let i = 0; i < steps && !s.done && s.state === 'fly'; i++) {
+      s.x += s.vx * dt / steps; s.y += s.vy * dt / steps; s.traveled += hyp(s.vx, s.vy) * dt / steps;
+      resonate(w, s);
+      flyCollide(w, s);
+    }
     if (s.done || s.state !== 'fly') return;
     if (s.stopAt !== undefined && s.traveled >= s.stopAt) {
       if (s.r.trigger === 'fuse' && !s.rolling) activate(w, s, s.x, s.y, null);
@@ -827,7 +835,7 @@ function flyCollide(w, s) {
   const C = R.clash;
   for (const k of w.rocks) if (hyp(k.x - s.x, k.y - s.y) < k.r * 0.92 + s.size) { hitObstacle(w, s, k.x, k.y, k.r * 0.92 + s.size); return; }
   for (const g of w.wards) {
-    if (g.owner === s.owner || g.hp <= 0 || passWard || s.passed.includes(g.id)) continue;
+    if (g.owner === s.owner || g.hp <= 0 || s.passed.includes(g.id)) continue;
     const cp = wardPoint(g, s.x, s.y);
     if (hyp(cp.x - s.x, cp.y - s.y) > g.r + s.size) continue;
     const go = unitById(w, g.owner);
@@ -838,19 +846,12 @@ function flyCollide(w, s) {
       hitObstacle(w, s, cp.x, cp.y, g.r + s.size);
       return;
     }
-    // 質の相性：エネルギーは固体の結界を貫く（削り、大きく弱まる）
-    if (s.matter === 'energy' && g.matter === 'solid') {
-      s.passed.push(g.id); hurtWard(w, g, s.dmg * C.pierceWard * s.wardMul); s.dmg *= C.pierceKeep;
-      w.events.push({ type: 'pierce', x: s.x, y: s.y, col: s.col });
-      continue;
-    }
     // 固体はエネルギーの結界を剥がす。形の貫通力（斧・槌・槍…）が強いほど大きく削る
     let hit = s.dmg * s.wardMul;
     if (s.matter === 'solid' && g.matter === 'energy') { hit *= C.strip; w.events.push({ type: 'strip', x: s.x, y: s.y, col: s.col }); }
     else if (['sunder', 'corrode', 'unmake'].includes(s.res.type)) hit *= 3.5;
     hurtWard(w, g, hit);
-    // 砕ききれば止まらず抜ける（少し弱まる）
-    if (g.hp <= 0) { s.passed.push(g.id); s.dmg *= C.breakKeep; continue; }
+    // 設置壁は岩と同じ遮蔽物。壊した一撃もここで受け止める。
     if (go) go.blocked++;
     hitObstacle(w, s, cp.x, cp.y, g.r + s.size);
     return;
@@ -908,11 +909,11 @@ function hitObstacle(w, s, cx, cy, rad) {
     return;
   }
   if (s.r.trigger === 'contact') {
-    if (s.r.form === 'point') { s.done = true; w.events.push({ type: 'splat', x: s.x, y: s.y, col: s.col }); }
+    if (s.r.form === 'point' && !STRUCTURE.includes(s.res.type) && s.r.deploy === 'single') { s.done = true; w.events.push({ type: 'splat', x: s.x, y: s.y, col: s.col }); }
     else activate(w, s, s.x, s.y, null);
   } else { s.x -= s.vx * 0.02; s.y -= s.vy * 0.02; arrive(w, s); }
 }
-// 貫通光線：岩と違う紋の結界で止まる（虚蝕・相の追加性質は結界を越える）。途中の相手はすべて貫く
+// 貫通光線：岩と設置壁で止まり、途中の相手を貫く。位相は領域型の結界だけを越える
 function fireBeam(w, u, common, a, range, width) {
   const x0 = u.x + Math.cos(a) * u.r, y0 = u.y + Math.sin(a) * u.r;
   const dx = Math.cos(a), dy = Math.sin(a);
@@ -927,20 +928,20 @@ function fireBeam(w, u, common, a, range, width) {
   };
   let len = range;
   for (const k of w.rocks) { const e = entry(k.x, k.y, k.r * 0.9); if (e !== null && e < len) len = e; }
-  // 光線は溜めが長い分、一撃が重い（旧版の1.6倍をさらに強めた）。結界に当たると、固体は貫き、エネルギーは強ければ砕いて進む
+  // 光線は溜めが長い分、一撃が重い。設置壁を壊しても、その一撃は壁で止まる
   const C = R.clash;
   let dmg = common.dmg * (D.behaviors.beam.hitMul || 1);
   const passWard = common.res.type === 'void' || extrasCount(common.r, 'phase') > 0;
-  if (!passWard) {
+  {
     const blocks = [];
     for (const g of w.wards) {
-      if (g.owner === u.id || g.low || g.hp <= 0) continue;
+      if (g.owner === u.id || g.hp <= 0) continue;
       // 面の結界は線分に沿って並べた円で調べる
       let e = null;
       for (const p of wardSamples(g)) { const q = entry(p.x, p.y, g.r); if (q !== null && (e === null || q < e)) e = q; }
       if (e !== null && e < len) blocks.push({ e, o: g, ward: true });
     }
-    for (const z of w.zones) if (z.barrier && !z.dead && z.owner !== u.id) { const e = entry(z.x, z.y, z.zr); if (e !== null && e < len) blocks.push({ e, o: z, ward: false }); }
+    for (const z of w.zones) if (!passWard && z.barrier && !z.dead && z.owner !== u.id) { const e = entry(z.x, z.y, z.zr); if (e !== null && e < len) blocks.push({ e, o: z, ward: false }); }
     blocks.sort((p, q) => p.e - q.e);
     for (const b of blocks) {
       if (b.e >= len) break;
@@ -955,11 +956,12 @@ function fireBeam(w, u, common, a, range, width) {
       const solid = o.matter === 'solid', hit = dmg * (solid ? C.beamSolid : C.beamWard);
       if (b.ward) hurtWard(w, o, hit); else hurtZone(w, o, hit);
       const broke = b.ward ? o.hp <= 0 : o.dead;
-      if (solid || broke) {
+      if (!b.ward && (solid || broke)) {
         if (!broke) { dmg *= C.pierceKeep; w.events.push({ type: 'pierce', x: x0 + dx * b.e, y: y0 + dy * b.e, col: common.col }); }
         continue;
       }
       len = b.e;
+      const defender = unitById(w, o.owner); if (defender) defender.blocked++;
       w.events.push({ type: 'absorb', x: x0 + dx * len, y: y0 + dy * len, col: o.col, kind: o.barrier || o.kind });
       break;
     }
@@ -976,11 +978,16 @@ function fireBeam(w, u, common, a, range, width) {
   for (const o of w.units) {
     if (!o.alive || o.id === u.id || o.dashT > 0) continue;
     const fx = o.x - x0, fy = o.y - y0, t = fx * dx + fy * dy;
-    if (t < -o.r || t > len + o.r) continue;
+    if (t < 0 || t >= len) continue;
     // 光線もわずかに散る（届いた距離で弱まる）
     if (hyp(fx - dx * t, fy - dy * t) < o.r + width) hitFoe(w, { ...common, dmg, vx: dx, vy: dy, traveled: Math.max(0, t) }, u, o, 1, dx, dy);
   }
-  w.events.push({ type: 'beam', id: u.id, x1: x0, y1: y0, x2: x0 + dx * len, y2: y0 + dy * len, w: width, col: common.col, rtype: common.res.type, a: common.r.a });
+  // 光線でも現象を捨てない。照準地点（遮蔽物より手前）で構造を作り、直撃は二重に数えない。
+  const reach = Math.min(len, Math.max(0, hyp(u.input.tx - u.x, u.input.ty - u.y) - u.r));
+  const payload = { ...common, x: x0 + dx * reach, y: y0 + dy * reach, vx: dx, vy: dy, dmg };
+  effectAt(w, payload, payload.x, payload.y, common.radius, 1, null, false);
+  if (common.res.type === 'swarm') for (let i = 0; i < 3; i++) spawnShard(w, payload, payload.x, payload.y, w.rng() * TAU, 0.3);
+  w.events.push({ type: 'beam', id: u.id, x1: x0, y1: y0, x2: x0 + dx * len, y2: y0 + dy * len, w: width, col: common.col, rtype: common.res.type, a: common.r.a, b: common.r.b });
 }
 
 // ═══ 09. 起動（追加機能）と現象 ═════════════════════════════════
@@ -1015,7 +1022,10 @@ function activate(w, s, x, y, direct) {
     return;
   }
   if (dep === 'linger' && !STRUCTURE.includes(type)) { spawnZone(w, { ...s, x, y }, 'linger', s.radius, 3.5 * r.duration); return; }
-  if (dep === 'siphon') { spawnZone(w, { ...s, x, y }, 'siphon', s.radius, 3 * r.duration); return; }
+  if (dep === 'siphon') {
+    if (STRUCTURE.includes(type)) effectAt(w, s, x, y, s.radius, 1, direct);
+    spawnZone(w, { ...s, x, y }, 'siphon', s.radius, 3 * r.duration); return;
+  }
   const mul = dep === 'burst' ? 1.1 : dep === 'scatter' ? 0.55 : 1;
   effectAt(w, s, x, y, dep === 'scatter' ? s.radius * 0.6 : s.radius, mul, direct);
   if (dep === 'scatter' && !s.frag) for (let i = 0; i < 5; i++) spawnShard(w, s, x, y, i / 5 * TAU + w.rng(), 0.32);
@@ -1027,14 +1037,14 @@ function spawnShard(w, s, x, y, a, mul) {
   const r = { ...s.r, form: 'point', behavior: 'homing', trigger: 'contact', deploy: 'single', link: 'cut', extras: s.r.extras.filter(k => k !== 'grow') };
   w.spells.push({
     owner: s.owner, col: s.col, r, res: s.res, dmg: s.dmg * mul, radius: 30, hold: false, linked: false, cost: 0, cast: s.cast,
-    id: w.nextId++, kind: 'proj', state: 'fly', x, y, vx: Math.cos(a) * 420, vy: Math.sin(a) * 420, speed: 420,
+    id: w.nextId++, kind: 'proj', state: 'fly', x, y, vx: Math.cos(a) * 420 * r.velocity, vy: Math.sin(a) * 420 * r.velocity, speed: 420 * r.velocity,
     range: 420, traveled: 0, age: 0, wait: 0, fuseT: 1, homing: true, tgt: null, retarget: 0, size: 4, pierce: 0, hit: [], shape: 'shard', frag: true,
     matter: s.r.matter, passed: [], bounce: 0, t: 0, life: 0, ang: 0, orad: 0, hp: 0, hitT: 0,
     wardMul: 1, returns: false, back: false, spin: 0, orbMul: 0
   });
 }
 // 現象が起こる：範囲の中の違う紋に効き、種類によって結界・領域を作る
-function effectAt(w, s, x, y, radius, mul, direct) {
+function effectAt(w, s, x, y, radius, mul, direct, applyHits = true) {
   const owner = unitById(w, s.owner);
   if (!owner) return;
   const type = s.res.type, r = s.r, dur = r.duration * (r.deploy === 'linger' ? 1.8 : 1);
@@ -1074,7 +1084,7 @@ function effectAt(w, s, x, y, radius, mul, direct) {
       }
       break;
   }
-  for (const u of foes) hitFoe(w, s, owner, u, mul, (u.x - x) || Math.cos(dir), (u.y - y) || Math.sin(dir));
+  if (applyHits) for (const u of foes) hitFoe(w, s, owner, u, mul, (u.x - x) || Math.cos(dir), (u.y - y) || Math.sin(dir));
 }
 function heal(w, u, amount) {
   if (!u.alive || amount <= 0) return;
@@ -1097,6 +1107,7 @@ function spawnZone(w, s, kind, zr, life) {
     if (s.res.type === 'solid') owner.shield = Math.max(owner.shield, 12 + s.res.terrain * 0.4 * s.r.power);   // 固化装甲
     if (['wall', 'trench', 'root', 'prison'].includes(s.res.type)) ringWards(w, s, owner.x, owner.y, owner.r + 44, 10, s.res.type, 3 * s.r.duration);
     if (s.res.type === 'counter') owner.reflectT = Math.max(owner.reflectT, 0.8);
+    if (s.res.type === 'mirror') effectAt(w, s, owner.x, owner.y, zr, 1, null, false);
   }
   w.events.push({ type: 'zone', id: z.id, kind, x: z.x, y: z.y, r: zr, col: z.col, rtype: s.res.type, owner: s.owner });
   return z;
@@ -1131,6 +1142,7 @@ function updateZones(w, dt) {
       continue;
     }
     if (z.kind === 'orbit') {
+      if (type === 'well') { owner.mp = Math.min(maxMp(owner), owner.mp + 6); continue; }
       if (z.barrier || ['solid', 'wall', 'trench', 'root', 'prison', 'well', 'mirror', 'blink', 'veil'].includes(type)) continue;
       if (type === 'mend' || type === 'bloom') { heal(w, owner, z.dmg * 0.35); continue; }
     }
@@ -1343,7 +1355,7 @@ function hitFoe(w, s, owner, u, mul, dirx, diry) {
   if (['rend', 'sunder', 'unmake'].includes(type)) severAll(w, u, 'cut');
   if (!u.alive) return;
   damage(w, u, dmg, owner);
-  w.events.push({ type: 'hit', x: u.x - nx * u.r * 0.6, y: u.y - ny * u.r * 0.6, dmg, col: s.col, rtype: type, a: r.a, target: u.id, owner: owner.id, vx: nx, vy: ny, shielded: dmg <= 0, matter: r.matter });
+  w.events.push({ type: 'hit', x: u.x - nx * u.r * 0.6, y: u.y - ny * u.r * 0.6, dmg, col: s.col, rtype: type, a: r.a, b: r.b, shape: visualShapeOf(r), target: u.id, owner: owner.id, vx: nx, vy: ny, shielded: dmg <= 0, matter: r.matter });
 }
 function root(u, t) { u.rootT = Math.max(u.rootT, t); }
 function slow(u, amt, t) { u.slowAmt = Math.max(u.slowAmt, amt); u.slowT = Math.max(u.slowT, t); }
@@ -1788,6 +1800,12 @@ function botThink(w, u, dt) {
   ix.slot = slot;
 }
 
+// ChatGPT版の自動操縦から、Botと同じ判断を術者に適用する。通常の操作では呼ばれない。
+function autoThink(w, u, dt) {
+  if (!u.brain) u.brain = makeBrain(w, null);
+  botThink(w, u, dt);
+}
+
 // ═══ 16. 順位 ═══════════════════════════════════════════════════
 function rank(w) {
   w.ranking = w.units.filter(u => u.alive).sort((a, b) => b.mass - a.mass);
@@ -1812,6 +1830,6 @@ ROOT.PRIMA_SIM = {
   normRecipe, pairKey, recipeResult, spellName, partCount, complexityMul, misfireChance, recipeCost, windupTime, spellInfo, spellRole, visualShapeOf,
   purityMul, falloffMul, hurtZone, hurtWard, wardPoint, wardDist, perfectOk, dispelPerfect, nodeBoost, interfere,
   beginCast, release, fire, activate, effectAt, detonate, recall, linkedOf, sever, homingTarget,
-  damage, kill, rank, runPoints, tierOf, motesNear, mulberry, spellReach, slotFor
+  damage, kill, rank, runPoints, tierOf, motesNear, mulberry, spellReach, slotFor, autoThink
 };
 })();

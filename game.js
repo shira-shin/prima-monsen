@@ -527,6 +527,7 @@ function consumeEvents() {
   const near = (x, y) => hyp(x - cam.x, y - cam.y) < (vw + vh) / cam.z * 0.6;
   const vol = (x, y) => Math.max(0, 1 - hyp(x - cam.x, y - cam.y) / ((vw + vh) / cam.z * 0.6));
   for (const e of world.events) {
+    if (window.PRIMA_AUTO) window.PRIMA_AUTO.event(e, world, me);
     if (tutor.on) tutorEvent(e, meId);
     switch (e.type) {
       case 'chant': {
@@ -538,11 +539,11 @@ function consumeEvents() {
         const big = e.t >= D.chant.voiceAt || e.named;
         castCircles.push({ id: u.id, a: e.a, b: e.b, col: e.col, words: chantWords(r).join(L('・')), name: e.name, t: 0, life: e.t + 0.3, total: e.t, big, rot: rnd(0, TAU) });
         if (e.id === meId) {
-          chantPad(u.id, e.a, e.t, 1);
+          chantPad(u.id, r, e.t, 1);
           if (e.named) speak(`${e.name}！`, 'spell');
           if (big) say(u, `${e.name}！`, 'chant');
         } else if (big) {
-          withPan(u.x, () => chantPad(u.id, e.a, e.t, 0.35 * vol(u.x, u.y)));
+          withPan(u.x, () => chantPad(u.id, r, e.t, 0.35 * vol(u.x, u.y)));
           if (Math.random() < 0.6) say(u, `${e.name}！`, 'chant');
         }
         break;
@@ -558,8 +559,11 @@ function consumeEvents() {
         embers(tip.x, tip.y, e.col, 5, 160, e.aim, 0.9);
         for (let i = 0; i < 2; i++) arcFx(tip.x, tip.y, 26, e.col, 0.08);
         parts.push({ kind: 'glyph', x: tip.x, y: tip.y - 20, text: D.principles[e.a].kanji, ink: e.col, t: 0, life: 0.5 });
-        sfxAt('cast', e.id === meId ? 1 : 0.3 * vol(u.x, u.y), e.a, u.x);
-        if (e.beh === 'beam') sfxAt('beam', e.id === meId ? 1 : 0.35 * vol(u.x, u.y), null, u.x);
+        principleFx(e.a, tip.x, tip.y, 30, e.col, e.aim, 0.55);
+        if (e.b && e.b !== 'none' && e.b !== e.a) principleFx(e.b, tip.x, tip.y, 22, D.principles[e.b].ink || e.col, e.aim, 0.35);
+        ringFx(tip.x, tip.y, 36, 5, e.col, 0.12, 2);
+        if (e.beh !== 'beam') sfxAt('cast', e.id === meId ? 1 : 0.3 * vol(u.x, u.y), e, u.x);
+        if (e.beh === 'beam') sfxAt('beam', e.id === meId ? 1 : 0.35 * vol(u.x, u.y), e, u.x);
         if (e.id === meId) punch = Math.max(punch, e.beh === 'beam' ? 0.04 : 0.015);
         break;
       }
@@ -607,8 +611,8 @@ function consumeEvents() {
           principleFx(e.a, e.x, e.y, 26 + e.dmg * 0.8, e.col, dir, Math.min(1.4, 0.4 + e.dmg / 30));
         }
         if (!e.shielded && (mine || onMe || Math.random() < 0.35)) stain(e.x, e.y, 8 + e.dmg * 0.45, e.col, 9);
-        if (mine) { floatText(e.x, e.y - 10, e.shielded ? '0' : Math.round(e.dmg), e.col, 15 + Math.min(14, e.dmg * 0.4)); sfxAt('hit', 1, e.a, e.x); }
-        else if (!onMe) sfxAt('hit', 0.25 * vol(e.x, e.y), e.a, e.x);
+        if (mine) { floatText(e.x, e.y - 10, e.shielded ? '0' : Math.round(e.dmg), e.col, 15 + Math.min(14, e.dmg * 0.4)); sfxAt('hit', 1, e, e.x); }
+        else if (!onMe) sfxAt('hit', 0.25 * vol(e.x, e.y), e, e.x);
         if (onMe && !e.shielded) { shake(3 + e.dmg * 0.25); sfx('hurt', 1); flashScreen('pink', Math.min(0.16, 0.04 + e.dmg * 0.004)); }
         break;
       }
@@ -633,14 +637,21 @@ function consumeEvents() {
           stain(e.x, e.y, e.r * 0.5, e.col, 10);
         }
         if (e.form !== 'point' || e.deploy === 'burst') {
-          sfxAt('blast', e.owner === meId ? 1 : 0.5 * vol(e.x, e.y), e.a, e.x);
+          sfxAt('blast', e.owner === meId ? 1 : 0.5 * vol(e.x, e.y), e, e.x);
           shake(e.owner === meId ? 6 : 1.5);
           if (e.owner === meId || hyp(e.x - cam.x, e.y - cam.y) < 260) flashScreen(e.col, 0.1);
         }
         if (e.deploy === 'sprinkle') ringFx(e.x, e.y, 10, 90, 'yellow', 0.6, 2);
         break;
       case 'beam':
-        parts.push({ kind: 'beam', x: e.x1, y: e.y1, x2: e.x2, y2: e.y2, w: e.w, ink: e.col, t: 0, life: 0.4 });
+        if (!near(e.x1, e.y1) && !near(e.x2, e.y2) && !near((e.x1 + e.x2) / 2, (e.y1 + e.y2) / 2)) break;
+        parts.push({ kind: 'beam', x: e.x1, y: e.y1, x2: e.x2, y2: e.y2, w: e.w, ink: e.col, t: 0, life: 0.58 });
+        // 光線を走る圧力の輪と、副原理の細い残光。
+        for (let i = 1; i <= (LOW ? 2 : 5); i++) {
+          const f = i / (LOW ? 3 : 6), x = e.x1 + (e.x2 - e.x1) * f, y = e.y1 + (e.y2 - e.y1) * f;
+          if (near(x, y)) { ringFx(x, y, 5, 22, e.col, 0.22 + f * 0.2, 1.5); arcFx(x, y, 20, e.col, 0.15); }
+        }
+        if (e.b && e.b !== 'none' && e.b !== e.a) lineFx('streak', e.x1, e.y1, e.x2, e.y2, D.principles[e.b].ink || e.col, 0.7, 2);
         if (near(e.x1, e.y1)) { flareFx(e.x1, e.y1, 90, e.col, 0.3); flash(e.x1, e.y1, 50, '#fffaf0', 0.12); }
         if (near(e.x2, e.y2)) {
           flash(e.x2, e.y2, 80, e.col, 0.24); shockFx(e.x2, e.y2, 60, e.col, 0.3); flareFx(e.x2, e.y2, 140, e.col, 0.3);
@@ -764,19 +775,15 @@ function consumeEvents() {
       case 'kill': {
         const involved = e.killer === meId || e.victim === meId;
         if (near(e.x, e.y)) {
-          spray(e.x, e.y, e.ink, 40, 640, null, Math.PI, 5);
-          flash(e.x, e.y, e.r * 5, e.ink, 0.5);
-          flash(e.x, e.y, e.r * 1.2, '#fffaf0', 0.16);
-          shockFx(e.x, e.y, e.r * 6, e.ink, 0.6);
-          flareFx(e.x, e.y, e.r * 9, e.ink, 0.45);
-          embers(e.x, e.y, e.ink, 30, 420);
-          smokeFx(e.x, e.y, e.r * 1.2, 7);
+          const victim = S.unitById(world, e.victim);
+          parts.push({ kind: 'defeat', x: e.x, y: e.y, r: e.r, ink: e.ink, t: 0, life: 2.2, dir: victim && victim.vx < 0 ? -1 : 1 });
+          flash(e.x, e.y - e.r, e.r * 1.5, '#fffaf0', 0.09);
+          smokeFx(e.x, e.y, e.r, 4);
           stain(e.x, e.y, e.r * 1.5, e.ink, 16);
-          stamp(e.x, e.y, e.r * 1.4, e.ink, e.crest);
-          ringFx(e.x, e.y, e.r, e.r * 3.8, e.ink, 0.8, 6);
-          ringFx(e.x, e.y, e.r * 0.5, e.r * 2.2, e.killerInk || 'yellow', 0.5, 3);
-          // 体が魔素にほどけて立ちのぼる
-          for (let i = 0; i < 24; i++) parts.push({ kind: 'rise', x: e.x + rnd(-e.r, e.r), y: e.y + rnd(-e.r * 2, e.r * 0.3), vx: rnd(-20, 20), vy: -rnd(60, 160), r: rnd(2, 4), ink: e.ink, t: 0, life: rnd(0.8, 1.6) });
+          ringFx(e.x, e.y, e.r, e.r * 2.2, e.ink, 0.35, 2);
+          if (audio.ctx && profile.sfx && audio.ctx.state === 'running') {
+            withPan(e.x, () => { playTexture('arc', 'impact', vol(e.x, e.y) * 0.5, 0.7); playTexture('metal', 'impact', vol(e.x, e.y) * 0.22, 0.8, 0.48); });
+          }
         }
         // 断末魔と勝利宣言
         const killer = e.killer && S.unitById(world, e.killer);
@@ -932,6 +939,100 @@ function crackle(dur, vol, n = 6) { for (let i = 0; i < n; i++) hiss('highpass',
 const PENTA = [0, 2, 4, 7, 9, 12, 14, 16, 19, 21, 24];
 // 原理ごとの詠唱の響きの根音（Hz）
 const ROOT = { motion: 220, bind: 164.8, divide: 146.8, convert: 130.8, grow: 196, phase: 185 };
+// 一度だけ焼き込む音の素材。発射・飛翔・着弾で同じ材質を受け渡す。
+const soundBank = new Map(), flightVoices = new Map();
+function textureBuffer(material, stage) {
+  const key = material + ':' + stage;
+  if (soundBank.has(key)) return soundBank.get(key);
+  const a = audio.ctx, loop = stage === 'flight', impact = stage === 'impact';
+  const duration = loop ? 1 : stage === 'beam' ? 1.1 : impact ? 0.95 : 0.58;
+  const n = Math.ceil(a.sampleRate * duration), buffer = a.createBuffer(1, n, a.sampleRate), out = buffer.getChannelData(0);
+  let seed = 7183, low = 0, phase = 0;
+  const metal = material === 'metal', orb = material === 'orb';
+  for (let i = 0; i < n; i++) {
+    const t = i / a.sampleRate, u = i / n;
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    const noise = seed / 2147483648 - 1;
+    low += (noise - low) * 0.16;
+    const air = noise - low;
+    // ループの音程・うなりは整数周期。境界の雑音だけ短く窓掛けする。
+    const edge = loop ? Math.min(1, t / 0.015, (duration - t) / 0.015) : 1;
+    const env = loop ? 1 : Math.min(1, t / 0.004) * Math.exp(-t * (impact ? 5 : stage === 'beam' ? 3.4 : 9)) * Math.min(1, (1 - u) * 25);
+    const fundamental = metal ? 431 : orb ? 83 : 137;
+    phase += TAU * (loop ? fundamental : fundamental * (1 + 2.2 * Math.exp(-t * 32))) / a.sampleRate;
+    let tone;
+    if (metal) {
+      tone = Math.sin(TAU * 431 * t) * 0.28 + Math.sin(TAU * 1189 * t) * 0.14 + Math.sin(TAU * 2317 * t) * 0.07;
+      tone *= loop ? 0.25 + 0.08 * Math.sin(TAU * 17 * t) : Math.exp(-t * 3);
+    } else {
+      const modulation = Math.sin(TAU * (orb ? 59 : 211) * t) * (loop ? 1.6 : 5 * Math.exp(-t * 12));
+      tone = Math.sin(phase + modulation) * 0.34 + Math.sin(phase * 2) * 0.1;
+      tone *= 0.8 + 0.2 * Math.cos(TAU * (orb ? 7 : 13) * t);
+    }
+    const rupture = loop ? 0 : air * Math.exp(-t * (stage === 'beam' ? 18 : 65)) * 0.8;
+    const rush = loop ? air * edge * (metal ? 0.18 : 0.06) : (stage === 'beam' ? air * 0.32 : low * 0.35);
+    const body = loop ? 0 : Math.sin(TAU * (47 * t + 2 * (1 - Math.exp(-t * 35)))) * Math.exp(-t * 12) * 0.42;
+    out[i] = Math.tanh((tone + rush + rupture + body) * env) * 0.8;
+  }
+  soundBank.set(key, buffer);
+  return buffer;
+}
+function materialOf(r) { return r.matter === 'solid' || r.matter === 'perfect' ? 'metal' : r.shape === 'orb' || r.form === 'ring' ? 'orb' : 'arc'; }
+function playTexture(material, stage, v, rate = 1, delay = 0) {
+  const a = audio.ctx, source = a.createBufferSource(), gain = a.createGain();
+  source.buffer = textureBuffer(material, stage); source.playbackRate.value = rate;
+  gain.gain.value = v; source.connect(gain); gain.connect(audio.out || audio.bus);
+  source.onended = () => { source.disconnect(); gain.disconnect(); };
+  source.start(a.currentTime + delay);
+}
+function materialSound(r, v, impact = false) {
+  const ratio = (ROOT[r.a] || 180) / 180, second = (ROOT[r.b] || ROOT[r.a] || 180) / 180;
+  playTexture(materialOf(r), impact ? 'impact' : 'launch', v * 0.75, 0.8 + ratio * 0.15 + second * 0.05);
+}
+function stopFlightVoice(s, voice) {
+  const t = audio.ctx.currentTime;
+  voice.gain.gain.cancelScheduledValues(t);
+  voice.gain.gain.setTargetAtTime(0, t, 0.015);
+  voice.source.stop(t + 0.08);
+  flightVoices.delete(s);
+}
+function stopFlightAudio() { for (const [s, voice] of flightVoices) stopFlightVoice(s, voice); }
+// 弾そのものに持続音を割り当てる。近い三発に限定し、位置・速度だけを滑らかに更新。
+function flightAudio() {
+  if (!audio.ctx) return;
+  if (!profile.sfx || !profile.sfxVol || audio.ctx.state !== 'running' || mode !== 'play' || document.hidden || (forge.open && world.room.practice)) { stopFlightAudio(); return; }
+  const now = audio.ctx.currentTime;
+  const shots = world.spells.filter(s => !s.done && s.state === 'fly' && ['proj', 'lob'].includes(s.kind) && hyp(s.x - cam.x, s.y - cam.y) < 650)
+    .sort((a, b) => hyp(a.x - cam.x, a.y - cam.y) - hyp(b.x - cam.x, b.y - cam.y)).slice(0, LOW ? 2 : 3);
+  for (const [s, voice] of flightVoices) if (!shots.includes(s)) stopFlightVoice(s, voice);
+  for (const s of shots) {
+    let voice = flightVoices.get(s);
+    if (!voice) {
+      const source = audio.ctx.createBufferSource(), gain = audio.ctx.createGain();
+      const pan = audio.ctx.createStereoPanner ? audio.ctx.createStereoPanner() : audio.ctx.createGain();
+      source.buffer = textureBuffer(materialOf(s), 'flight'); source.loop = true;
+      gain.gain.value = 0; source.connect(gain); gain.connect(pan); pan.connect(audio.bus);
+      source.onended = () => { source.disconnect(); gain.disconnect(); pan.disconnect(); };
+      source.start(); voice = { source, gain, pan }; flightVoices.set(s, voice);
+    }
+    const d = Math.max(1, hyp(s.x - cam.x, s.y - cam.y));
+    const approach = -((s.x - cam.x) * s.vx + (s.y - cam.y) * s.vy) / d;
+    voice.source.playbackRate.setTargetAtTime(Math.max(0.72, Math.min(1.35, 1 + approach / 3200)), now, 0.06);
+    voice.gain.gain.setTargetAtTime((1 - d / 650) ** 2 * 0.24, now, 0.035);
+    if (voice.pan.pan) voice.pan.pan.setTargetAtTime(Math.max(-1, Math.min(1, (s.x - cam.x) / 480)), now, 0.035);
+  }
+}
+// 主副原理の音程差を共鳴のうなりにする。全音色を重ねず、音量とノード数を抑える。
+function spellResonance(r, v, beam = false) {
+  const a = ROOT[r.a] || ROOT.motion, b = ROOT[r.b];
+  const dur = beam ? 0.85 : 0.32;
+  osc('triangle', a * 2.5, a * 0.65, dur, 0.075 * v);
+  if (b) {
+    osc('sine', b * 3, b * 1.5, dur + 0.18, 0.065 * v, { at: 0.018, detune: r.a === r.b ? 7 : -5 });
+    hiss('bandpass', a * 5 + b * 2, b * 3, 3.5, dur, 0.075 * v, { attack: 0.025 });
+  }
+  if (r.matter === 'solid') hiss('highpass', 6200, 2200, 1, 0.09, 0.12 * v);
+}
 // 原理の音色：放つ音。どれも「放った瞬間の打撃」と「原理の響き」を重ねる
 function principleCast(a, v) {
   thump(170, 55, 0.16, 0.26 * v);
@@ -983,17 +1084,23 @@ function sfx(name, vol = 1, arg) {
   audio.last[name] = now;
   const v = vol;
   switch (name) {
-    case 'cast': principleCast(arg || 'motion', v); break;
-    case 'beam':
-      // 光線：うなる低音と、裂ける高音、はぜる電気
-      thump(120, 40, 0.5, 0.4 * v);
-      osc('sawtooth', 82, 55, 0.6, 0.1 * v, { dest: audio.shaper });
-      osc('sawtooth', 165, 110, 0.55, 0.05 * v, { detune: 12 });
-      hiss('bandpass', 1600, 6200, 1.2, 0.5, 0.28 * v);
-      crackle(0.4, 0.07 * v, 7);
+    case 'cast': {
+      const r = typeof arg === 'object' && arg ? arg : { a: arg || 'motion' };
+      materialSound(r, v);
       break;
-    case 'hit': principleHit(arg || 'motion', v, false); break;
-    case 'blast': principleHit(arg || 'motion', v, true); break;
+    }
+    case 'beam':
+      // 先端の破裂を短く、空気の裂ける尾を長く残す。
+      playTexture('arc', 'beam', v * 0.85, 0.9 + (ROOT[arg && arg.a] || 180) / 1800);
+      break;
+    case 'hit': case 'blast': {
+      const r = typeof arg === 'object' && arg ? arg : { a: arg || 'motion' };
+      const heavy = name === 'blast';
+      materialSound(r, v * (heavy ? 1 : 0.65), true);
+
+      if (heavy) playTexture(materialOf(r), 'impact', v * 0.3, 0.62, 0.035);
+      break;
+    }
     case 'hurt': thump(140, 50, 0.24, 0.4 * v); hiss('lowpass', 1400, 250, 0.8, 0.18, 0.24 * v); osc('sawtooth', 90, 60, 0.12, 0.05 * v, { dest: audio.shaper }); break;
     case 'thud': thump(85, 38, 0.35, 0.2 * v); break;
     case 'ward': [0, 7, 12].forEach((n, i) => osc('sine', 330 * Math.pow(2, n / 12), 330 * Math.pow(2, n / 12), 1.2, 0.05 * v, { at: i * 0.03, attack: 0.03 })); thump(110, 60, 0.3, 0.2 * v); hiss('highpass', 5000, 5000, 1, 0.1, 0.06 * v); break;
@@ -1015,24 +1122,19 @@ function sfx(name, vol = 1, arg) {
     case 'recall': [12, 7, 0].forEach((n, i) => osc('sine', 660 * Math.pow(2, n / 12), 660 * Math.pow(2, n / 12), 0.35, 0.05, { at: i * 0.06 })); break;
     case 'dodge': hiss('bandpass', 600, 4200, 1, 0.22, 0.24); osc('sine', 300, 900, 0.12, 0.04); break;
     case 'select': osc('sine', 1100 + (arg || 0) * 150, 1100 + (arg || 0) * 150, 0.08, 0.035); osc('sine', 2200 + (arg || 0) * 300, 2200, 0.04, 0.015); break;
-    case 'kill':
-      // 撃破：低い銅鑼と、地を割る衝撃、立ちのぼる光の音
-      [110, 221.4, 331.9, 497].forEach((f, i) => osc('sine', f, f * 0.995, 2 - i * 0.3, (0.16 - i * 0.03) * v, { attack: 0.01 }));
-      thump(80, 24, 1.2, 0.55 * v);
-      hiss('lowpass', 3000, 200, 0.7, 0.6, 0.3 * v);
-      hiss('bandpass', 800, 7000, 2, 1.4, 0.07 * v, { attack: 0.5, at: 0.1 });
-      break;
+    case 'kill': thump(72, 29, 0.35, 0.2 * v); break;
     case 'pickup': { const n = PENTA[Math.min(PENTA.length - 1, Math.floor(arg / 2.4))], f = 1320 * Math.pow(2, n / 12); osc('sine', f, f, 0.12, 0.028 * v); break; }
     case 'level': [0, 4, 7, 11, 14].forEach((n, i) => osc('sine', 523 * Math.pow(2, n / 12), 523 * Math.pow(2, n / 12), 1.3, 0.05, { at: i * 0.07, attack: 0.02 })); hiss('bandpass', 1000, 8000, 1, 1, 0.08, { attack: 0.4 }); break;
     case 'surge': hiss('bandpass', 300, 1400, 0.8, 0.8, 0.14 * v, { attack: 0.3 }); thump(70, 35, 0.8, 0.25 * v, 0.3); break;
-    case 'down': [220, 196, 164.8].forEach((f, i) => osc('triangle', f, f * 0.7, 1.4, 0.08, { at: i * 0.12 })); hiss('lowpass', 900, 150, 0.6, 1, 0.2); thump(70, 25, 1.3, 0.4); break;
+    case 'down': hiss('lowpass', 700, 100, 0.6, 0.8, 0.12); thump(65, 25, 0.5, 0.22); break;
     case 'join': [0, 7, 12].forEach((n, i) => osc('sine', 392 * Math.pow(2, n / 12), 392 * Math.pow(2, n / 12), 0.9, 0.05, { at: i * 0.08, attack: 0.02 })); hiss('bandpass', 300, 2400, 1, 0.9, 0.12, { attack: 0.6 }); thump(90, 40, 0.6, 0.3, 0.6); break;
   }
 }
 // 詠唱の音：力が溜まっていく。共鳴するフィルタが開いていき、音程がせり上がり、放つ瞬間に止まる
 function chantPad(id, a, dur, vol) {
   if (!audio.ctx || !profile.sfx || audio.ctx.state !== 'running' || dur < 0.2) return;
-  const ac = audio.ctx, t = ac.currentTime, root = (ROOT[a] || 196) / 2, end = t + dur;
+  const recipe = typeof a === 'object' ? a : { a };
+  const ac = audio.ctx, t = ac.currentTime, root = (ROOT[recipe.a] || 196) / 2, end = t + dur;
   const out = ac.createGain();
   out.gain.setValueAtTime(0.0001, t);
   out.gain.exponentialRampToValueAtTime(0.1 * vol, end);
@@ -1041,7 +1143,8 @@ function chantPad(id, a, dur, vol) {
   lp.type = 'lowpass'; lp.Q.value = 7;
   lp.frequency.setValueAtTime(160, t); lp.frequency.exponentialRampToValueAtTime(4200, end);
   lp.connect(out); out.connect(audio.out || audio.bus);
-  for (const [m, det, type] of [[1, -9, 'sawtooth'], [1.5, 8, 'sawtooth'], [0.5, 0, 'sine']]) {
+  const interval = ROOT[recipe.b] ? ROOT[recipe.b] / (root * 2) * 1.5 : 1.5;
+  for (const [m, det, type] of [[1, -9, 'sawtooth'], [interval, 8, 'triangle'], [0.5, 0, 'sine']]) {
     const o = ac.createOscillator();
     o.type = type; o.detune.value = det;
     o.frequency.setValueAtTime(root * m, t); o.frequency.exponentialRampToValueAtTime(root * m * 1.5, end);
@@ -1742,27 +1845,27 @@ function drawSlab(g) {
     }
   }
   if (!solid || perfect) {
-    // 光の幕：足元の線から立ち上がる、上ほど淡い光。六角の網目が流れ、走査線が昇る
-    ctx.globalCompositeOperation = 'lighter';
-    const col = perfect ? '#ffe29a' : hex(c), fl = f < 0.5 ? 0.55 + Math.random() * 0.45 : 1;
+    // 封印を刻んだ透明な面。外縁は固定し、残りの強度は欠けと亀裂で示す。
+    ctx.globalCompositeOperation = 'source-over';
+    const col = perfect ? '#eae4f4' : hex(c);
     const ax = -L / 2 * cs, ay = -L / 2 * sn, bx = L / 2 * cs, by = L / 2 * sn, HH = H + 20;
     ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.lineTo(bx, by - HH); ctx.lineTo(ax, ay - HH); ctx.closePath();
     const gr = ctx.createLinearGradient(0, 0, 0, -HH);
-    gr.addColorStop(0, rgba(col, (0.4 + 0.3 * f) * fl)); gr.addColorStop(0.6, rgba(col, 0.13 * fl)); gr.addColorStop(1, rgba(col, 0));
-    ctx.fillStyle = gr; ctx.fill();
-    ctx.save(); ctx.clip();
-    ctx.strokeStyle = rgba(col, 0.28 * fl); ctx.lineWidth = 1;
-    const hs = 12, off = (t * 14) % (hs * 2);
-    ctx.beginPath();
-    for (let k = -2; k < L / hs + 2; k++) { const q = k * hs - L / 2 + off; const x = q * cs, y = q * sn; ctx.moveTo(x, y); ctx.lineTo(x + hs, y - HH); ctx.moveTo(x, y); ctx.lineTo(x - hs, y - HH); }
-    ctx.stroke();
-    ctx.strokeStyle = `rgba(255,250,240,${0.55 * fl})`;
-    for (let k = 0; k < 2; k++) { const h = (t * 30 + k * HH / 2 + g.id * 5) % HH; ctx.beginPath(); ctx.moveTo(ax, ay - h); ctx.lineTo(bx, by - h); ctx.stroke(); }
-    ctx.restore();
-    ctx.strokeStyle = rgba(col, 0.95 * fl); ctx.lineWidth = 2.2;
-    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
-    ctx.strokeStyle = `rgba(255,250,240,${0.8 * fl})`; ctx.lineWidth = 1;
-    ctx.stroke();
+    gr.addColorStop(0, rgba(col, 0.19)); gr.addColorStop(0.5, 'rgba(14,12,23,0.55)'); gr.addColorStop(1, rgba(col, 0.08));
+    ctx.fillStyle = gr; ctx.fill(); ctx.save(); ctx.clip(); ctx.globalCompositeOperation = 'lighter';
+    const count = Math.max(2, Math.ceil(L / 38));
+    for (let i = 0; i < count; i++) {
+      const q = (i + 0.5) / count, x = ax + (bx - ax) * q, y = ay + (by - ay) * q - HH * 0.5;
+      ctx.strokeStyle = rgba(col, 0.28 + f * 0.3); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x, y - 17); ctx.lineTo(x + 9, y); ctx.lineTo(x, y + 17); ctx.lineTo(x - 9, y); ctx.closePath(); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x - 5, y - 6); ctx.lineTo(x + 5, y + 6); ctx.moveTo(x, y - 10); ctx.lineTo(x, y + 10); ctx.stroke();
+      if (f < (i + 1) / (count + 1)) { ctx.strokeStyle = 'rgba(239,233,250,.7)'; ctx.beginPath(); ctx.moveTo(x - 8, y - HH); ctx.lineTo(x + 3, y - 9); ctx.lineTo(x - 4, y + 5); ctx.lineTo(x + 12, y + HH); ctx.stroke(); }
+    }
+    ctx.restore(); ctx.globalCompositeOperation = 'lighter';
+    ctx.strokeStyle = rgba(col, 0.65); ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.lineTo(bx, by - HH); ctx.lineTo(ax, ay - HH); ctx.closePath(); ctx.stroke();
+    ctx.strokeStyle = 'rgba(240,235,248,.7)'; ctx.lineWidth = 0.8; ctx.stroke();
+
   }
   ctx.restore();
 }
@@ -2455,10 +2558,10 @@ function drawWeapon(g, shape, s, col, matter, spin, lift = 0) {
 function drawFlyer(b) {
   const c = hex(b.col), r = b.size * 1.2, solid = b.matter === 'solid';
   const sp = hyp(b.vx, b.vy) || 1, ux = b.vx / sp, uy = b.vy / sp, ang = Math.atan2(uy, ux);
-  const flick = 0.85 + Math.random() * 0.3, A = Math.min(1, b.age / 0.04 + 0.3);
+  const flick = 0.96 + Math.sin(world.t * 19 + b.id) * 0.04, A = Math.min(1, b.age / 0.04 + 0.3);
   ctx.globalAlpha = A * (solid ? 0.45 : 1);
   drawTrail(b, (b.shape === 'orb' ? r * 1.8 : r * 1.1) * (solid ? 0.6 : 1));
-  ctx.globalAlpha = A * (solid ? 0.14 : 0.35);
+  ctx.globalAlpha = A * (solid ? 0.12 : 0.16);
   ctx.drawImage(glow(b.col), b.x - r * 7, b.y - r * 7, r * 14, r * 14);
   ctx.globalAlpha = A;
   if (solid || WEAPONS.includes(b.shape)) {
@@ -2468,17 +2571,21 @@ function drawFlyer(b) {
     ctx.restore();
     if (!solid) { const s = r * 1.5 * flick; ctx.drawImage(hotGlow(b.col), b.x - s, b.y - s, s * 2, s * 2); }
   } else if (b.shape === 'orb') {
-    // 球：渦巻くプラズマ。まわりに細い電弧がのたうつ
-    ctx.drawImage(glow(b.col), b.x - r * 3.8 * flick, b.y - r * 3.8 * flick, r * 7.6 * flick, r * 7.6 * flick);
-    ctx.strokeStyle = rgba(c, 0.85); ctx.lineWidth = Math.max(1, r * 0.16); ctx.lineCap = 'round';
-    for (let i = 0; i < 4; i++) {
-      let a = Math.random() * TAU, rr = r * 0.5;
-      ctx.beginPath(); ctx.moveTo(b.x + Math.cos(a) * rr, b.y + Math.sin(a) * rr);
-      for (let k = 0; k < 3; k++) { a += rnd(-0.7, 0.7); rr += r * rnd(0.3, 0.6); ctx.lineTo(b.x + Math.cos(a) * rr, b.y + Math.sin(a) * rr); }
-      ctx.stroke();
+    // 暗い殻・回る圧縮層・白い芯。毎フレーム乱数の電弧で輪郭を隠さない。
+    ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(ang);
+    ctx.globalCompositeOperation = 'source-over'; ctx.fillStyle = '#100e19';
+    ctx.beginPath(); ctx.arc(0, 0, r, 0, TAU); ctx.fill();
+    ctx.globalCompositeOperation = 'lighter'; ctx.strokeStyle = c; ctx.lineWidth = Math.max(1, r * 0.1); ctx.stroke();
+    const secondary = b.r && D.principles[b.r.b];
+    for (let i = 0; i < 3; i++) {
+      ctx.save(); ctx.rotate(world.t * (i % 2 ? -2 : 2) + i * 1.05);
+      ctx.strokeStyle = i === 1 && secondary ? hex(secondary.ink) : i === 2 ? '#e9e6f3' : c;
+      ctx.globalAlpha = A * (i === 2 ? 0.85 : 0.6); ctx.lineWidth = i === 2 ? 1 : 1.6;
+      ctx.beginPath(); ctx.ellipse(0, 0, r * (0.7 + i * 0.18), r * 0.33, 0, 0.2, 5.5); ctx.stroke(); ctx.restore();
     }
-    const s = r * 2.4 * flick;
-    ctx.drawImage(hotGlow(b.col), b.x - s, b.y - s, s * 2, s * 2);
+    ctx.globalAlpha = A * 0.8; ctx.drawImage(hotGlow(b.col), -r * 0.65, -r * 0.65, r * 1.3, r * 1.3);
+    ctx.strokeStyle = '#e9e6f3'; ctx.lineWidth = 1; ctx.globalAlpha = A * 0.45;
+    ctx.beginPath(); ctx.arc(-r * 0.15, 0, r * 1.5, -0.7, 0.7); ctx.stroke(); ctx.restore();
   } else if (b.shape === 'shard') {
     // 結晶：回る光の反射と、刃先の白い光
     ctx.drawImage(glow(b.col), b.x - r * 3, b.y - r * 3, r * 6, r * 6);
@@ -2610,8 +2717,51 @@ function drawLabel(u) {
     ctx.fillStyle = hex(u.ink); ctx.fillRect(x, yy, w * Math.max(0, u.hp / u.maxHp), h);
   }
 }
+// 衝撃で反る → 膝と肩が落ちる → 杖が転がり、裂けた外套が灰にほどける。
+function drawDefeat(p) {
+  const t = p.t, r = p.r, fall = Math.min(1, Math.max(0, (t - 0.12) / 0.55));
+  const ash = Math.max(0, (t - 0.85) / 1.35), col = hex(p.ink);
+  ctx.save(); ctx.globalCompositeOperation = 'source-over'; ctx.translate(p.x, p.y);
+  ctx.globalAlpha = (1 - ash) * 0.65; ctx.fillStyle = '#030205';
+  ctx.beginPath(); ctx.ellipse(0, 5, r * (1 + fall), r * 0.35, 0, 0, TAU); ctx.fill();
+  // 杖は体と別に落ちる。接地後は跳ねが減衰する。
+  ctx.save(); ctx.translate(r * (0.8 + fall * 0.8) * p.dir, -r * (1 - fall) - Math.abs(Math.sin(fall * 9)) * r * 0.15);
+  ctx.rotate(p.dir * fall * 1.5); ctx.globalAlpha = 1 - ash; ctx.strokeStyle = '#827b73'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(0, -r * 1.4); ctx.lineTo(0, r * 0.5); ctx.stroke(); ctx.restore();
+  ctx.save(); ctx.translate(p.dir * r * fall * 0.55, -r * 0.2); ctx.rotate(p.dir * (-0.22 * Math.exp(-t * 8) + fall * 1.12));
+  ctx.globalAlpha = 1 - ash;
+  const robe = ctx.createLinearGradient(-r, 0, r * 0.5, 0);
+  robe.addColorStop(0, cloth(col, 1.3)); robe.addColorStop(0.4, cloth(col, 0.9)); robe.addColorStop(1, '#100d16');
+  ctx.fillStyle = robe; ctx.strokeStyle = cloth(col, 1.5); ctx.lineWidth = 0.8;
+  ctx.beginPath(); ctx.moveTo(-r * 0.38, -r * 1.55);
+  ctx.bezierCurveTo(-r * 0.72, -r * 1.05, -r * 0.62, -r * 0.3, -r, r * 0.22);
+  for (let i = 0; i < 9; i++) ctx.lineTo(r * (-1 + i * 0.21), r * (i % 2 ? 0.12 : 0.3));
+  ctx.bezierCurveTo(r * 0.45, -r * 0.3, r * 0.65, -r, r * 0.35, -r * 1.5);
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.strokeStyle = 'rgba(0,0,0,.5)'; ctx.lineWidth = 1.5;
+  for (let i = -2; i < 3; i++) { ctx.beginPath(); ctx.moveTo(i * r * 0.13, -r * 1.1); ctx.quadraticCurveTo(i * r * 0.11, -r * 0.4, i * r * 0.29, r * 0.16); ctx.stroke(); }
+  // 尖ったフードの奥は暗く、顔が伏せられるほど内側の影が広がる。
+  ctx.fillStyle = robe; ctx.strokeStyle = cloth(col, 1.5); ctx.lineWidth = 0.8;
+  ctx.beginPath(); ctx.moveTo(-r * 0.43, -r * 1.3); ctx.bezierCurveTo(-r * 0.6, -r * 1.8, -r * 0.18, -r * 2.12, r * 0.09, -r * 2.2); ctx.quadraticCurveTo(r * 0.56, -r * 1.95, r * 0.42, -r * 1.32); ctx.quadraticCurveTo(0, -r * 1.15, -r * 0.43, -r * 1.3); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#08070c'; ctx.beginPath(); ctx.ellipse(r * 0.05, -r * 1.63, r * 0.28, r * 0.35, fall * 0.4, 0, TAU); ctx.fill();
+  // 肩から垂れる腕と、途切れた刺繍の光。
+  ctx.strokeStyle = cloth(col, 1.1); ctx.lineWidth = r * 0.22; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(-r * 0.45, -r * 1.2); ctx.quadraticCurveTo(-r * (0.9 + fall * 0.2), -r * 0.7, -r * (0.65 + fall * 0.4), -r * 0.15); ctx.stroke();
+  ctx.globalCompositeOperation = 'lighter'; ctx.strokeStyle = col; ctx.lineWidth = 1;
+  for (let i = 0; i < 5; i++) { ctx.globalAlpha = Math.max(0, 0.65 - t * 0.38 - i * 0.025); ctx.beginPath(); ctx.moveTo(-r * 0.5, -r * 1.2 + i * r * 0.28); ctx.lineTo(r * 0.2, -r * 0.95 + i * r * 0.24); ctx.stroke(); }
+  ctx.restore();
+  ctx.globalCompositeOperation = 'source-over';
+  for (let i = 0; i < (LOW ? 14 : 30); i++) {
+    const q = i / 30, drift = Math.max(0, t - 0.55 - q * 0.35);
+    if (!drift) continue;
+    ctx.globalAlpha = Math.max(0, Math.min(1, drift * 3) * (1 - ash)); ctx.fillStyle = i % 5 === 0 ? col : '#69616e';
+    const x = Math.sin(i * 12.7) * r + drift * (10 + q * 20), y = -q * r * 1.7 - drift * (15 + q * 25);
+    ctx.fillRect(x, y, 1.5 + q * 2, 1 + q * 2);
+  }
+  ctx.restore();
+}
 function drawPart(p) {
   const f = p.t / p.life, c = hex(p.ink);
+  if (p.kind === 'defeat') { drawDefeat(p); return; }
   if (p.kind === 'spark' || p.kind === 'rise') {
     const a = 1 - f * f, s = p.r * (1 - f * 0.6);
     ctx.globalAlpha = a;
@@ -3198,6 +3348,7 @@ function buildForge() {
   $('fPower').addEventListener('input', () => setDraft({ power: Number($('fPower').value) }, true));
   $('fDur').addEventListener('input', () => setDraft({ duration: Number($('fDur').value) }, true));
   $('fRate').addEventListener('input', () => setDraft({ rate: Number($('fRate').value) }, true));
+  $('fVelocity').addEventListener('input', () => setDraft({ velocity: Number($('fVelocity').value) }, true));
   $('fName').addEventListener('input', () => setDraft({ customName: $('fName').value }, true));
   $('forgeSlots').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { forge.slot = Number(b.dataset.i); forge.msg = ''; renderForge(); } });
   $('fPresets').innerHTML = D.presetOrder.map(k => `<button type="button" class="chip preset" data-k="${k}" title="${escapeHtml(S.spellName(S.normRecipe(D.presets[k].r)))}">${D.presets[k].label}</button>`).join('');
@@ -3249,7 +3400,7 @@ function describe(r) {
   let t = L('{0}の「{1}」を{2}{3}。', D.forms[r.form].name, res.base, r.matter === 'solid' ? L('固体（結晶）にして') : L('エネルギーのまま'), PHRASE.behavior[r.behavior]);
   if (r.behavior === 'orbit') t += L('周りに入った違う紋に{0}。', r.deploy === 'single' ? L('作用し続ける') : PHRASE.deploy[r.deploy]);
   else if (r.behavior !== 'beam') t += L('{0}{1}。', PHRASE.trigger[r.trigger], PHRASE.deploy[r.deploy]);
-  t += r.matter === 'solid' ? L('固体の結界には止められるが、エネルギーの結界は剥がせる。') : L('固体の結界は貫けるが、エネルギーの結界には止められる。');
+  t += r.matter === 'solid' ? L('固体の結界には止められるが、エネルギーの結界は剥がせる。') : L('設置壁は光線も止める。壊した一撃も、その壁で止まる。');
   if (['wall', 'solid', 'trench'].includes(res.type) && ['line', 'plane', 'ring'].includes(r.form)) t += r.form === 'ring' ? L('六枚の面の壁で囲む城壁になる。') : L('一枚の面の壁になる。');
   if (['project', 'homing', 'relay'].includes(r.behavior) && shape && S.visualShapeOf(r) !== 'needle') t += L('形：{0}。', shape.note);
   if (r.link === 'hold') t += L('放った後も糸でつながり、誘導・指示起爆（F）・回収（G）ができる（維持費がかかる）。');
@@ -3315,6 +3466,9 @@ function renderForge(soft = false) {
   $('fPowerV').textContent = `${Math.round(r.power * 100)}%`;
   $('fDurV').textContent = `${Math.round(r.duration * 100)}%`;
   $('fRateV').textContent = `×${r.rate}`;
+  $('fVelocity').value = r.velocity;
+  $('fVelocityV').textContent = `${Math.round(r.velocity * 100)}%`;
+  $('fVelocity').disabled = !['project', 'homing', 'lob', 'sow', 'relay'].includes(r.behavior);
   const durOk = r.trigger === 'fuse' || ['linger', 'siphon'].includes(r.deploy) || r.behavior === 'orbit' || r.trigger === 'proximity' || r.trigger === 'command';
   $('fDur').disabled = !durOk;
   $('fRate').disabled = S.normRecipe({ ...r, rate: 3 }).rate === 1;
@@ -3369,6 +3523,7 @@ function drawPreview(time) {
   if (beh === 'sow') { endX = cx + 90; endY = cy - 10; }
   if (beh === 'lob') { endX = tx - 10; endY = ty + 6; }
   if (beh === 'beam') stop = 0.15;
+  if (['project', 'homing', 'lob', 'sow', 'relay'].includes(beh)) stop /= r.velocity;
   const fly = Math.min(1, t / stop);
   const glowAt = (x, y, s) => { g.globalCompositeOperation = 'lighter'; g.drawImage(glow(c), x - s, y - s, s * 2, s * 2); g.globalCompositeOperation = 'source-over'; };
   if (beh === 'orbit' && r.matter === 'solid') {
@@ -3438,6 +3593,7 @@ function join(roomKey) {
   world = worldFor(roomKey || profile.room);
   practiceLog.length = 0;
   const me = S.spawnHero(world, { name: profile.name || L('名無し'), ink: profile.ink, crest: profile.crest, tier: S.tierOf(profile.points), spells: profile.spells, cries: profile.cries });
+  if (window.PRIMA_AUTO) window.PRIMA_AUTO.join(world, me);
   run = { startT: world.t, ended: false };
   mode = 'play';
   deathReady = false;
@@ -3560,7 +3716,7 @@ function heroDown(e) {
     $('death').hidden = false;
     deathReady = true;
     $('againBtn').focus();
-  }, 1400);
+  }, 2300);
 }
 function leave() {
   if (mode !== 'play') return;
@@ -3576,6 +3732,7 @@ function leave() {
 }
 function toLobby() {
   mode = 'lobby';
+  if (window.PRIMA_AUTO) window.PRIMA_AUTO.lobby();
   $('death').hidden = true; $('hud').hidden = true; $('lobby').hidden = false;
   syncLobby();
   syncWelcome();
@@ -3608,6 +3765,7 @@ function frame(now) {
 // タブを隠したら音楽と声を止め、戻ったら再開する
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
+    stopFlightAudio();
     for (const el of bgmEls) el.pause();
     if (window.speechSynthesis) window.speechSynthesis.cancel();
     if (audio.ctx && audio.ctx.suspend) audio.ctx.suspend();
@@ -3619,10 +3777,14 @@ document.addEventListener('visibilitychange', () => {
 function tick(dt) {
   clock += dt;
   const me = S.hero(world);
-  if (mode === 'play' && me && me.alive) heroInput(me);
+  if (mode === 'play' && me && me.alive) {
+    if (window.PRIMA_AUTO && window.PRIMA_AUTO.enabled) window.PRIMA_AUTO.drive(world, me, dt);
+    else heroInput(me);
+  }
   if (freeze > 0) freeze -= dt;
   else if (!(forge.open && world.room.practice)) S.step(world, dt);
   consumeEvents();
+  flightAudio();
   tutorTick(dt);
   updateFx(dt);
   updateSpeech(dt);
@@ -3653,6 +3815,7 @@ function tick(dt) {
   drawPreview(clock);
   if (mode !== 'lobby') updateHud(dt);
   else { hudT -= dt; if (hudT <= 0) { hudT = 1; syncRoomCounts(); } }
+  if (window.PRIMA_AUTO) window.PRIMA_AUTO.tick({ world, me, mode, dt, deathReady });
   if (toastTimer > 0) { toastTimer -= dt; if (toastTimer <= 0) $('toast').innerHTML = ''; }
 }
 // ロビーの人数と首位だけを定期的に書き換える（選択中のボタンを作り直さない）
@@ -3669,6 +3832,7 @@ function syncRoomCounts() {
 setInterval(() => { for (const k in worlds) if (worlds[k] !== world) { for (let i = 0; i < 6; i++) S.step(worlds[k], 1 / 12); worlds[k].events.length = 0; } }, 500);
 
 buildLobby();
+if (window.PRIMA_AUTO) window.PRIMA_AUTO.attach({ join, leave, toLobby, L, unlockAudio, world: () => world });
 syncWelcome();
 requestAnimationFrame(frame);
 // 開発用：URL の末尾が #debug のときだけ内部を触れる

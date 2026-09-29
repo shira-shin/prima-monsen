@@ -9,6 +9,7 @@ const LANG = {};
 // ═══ English ═══════════════════════════════════════════════════
 LANG.en = {
   ui: {
+    '飛翔速度': 'Flight speed', '弾が飛ぶ速さ。高速ほど消費魔力が増える。光線・自位置・周回は対象外。': 'How fast shots travel. Higher speed costs more mana. Does not apply to beams, self-placement or orbit.',
     '・': ' · ', '！': '!', '／': ' / ', '{0}{1}。': '{0} {1}. ',
     '自動（スマホや重い端末は軽く）': 'Auto (lighter on phones and slow devices)', '高い': 'High', '軽い（スマホ向け）': 'Light (for phones)', '画質を軽くした': 'Graphics set to light', '起爆': 'Blast', '回収': 'Recall', '画質': 'Graphics', '加速': 'Haste', '硬化': 'Harden', '活性': 'Vitality', '自分の紋の魔力を体へ書き込んだ': 'You inscribed your own crest\'s mana into your body',
     '暴発': 'Misfire', '「{0}」は制御容量を超えていた': '"{0}" exceeded your control capacity', '術式が…崩れる！': 'The spell… is collapsing!',
@@ -63,7 +64,7 @@ LANG.en = {
     '{0}の「{1}」を{2}{3}。': '{0} "{1}" — {2}{3}. ', '固体（結晶）にして': 'solidified into crystal, ', 'エネルギーのまま': 'as raw energy, ',
     '周りに入った違う紋に{0}。': 'Against foreign crests in range, it {0}. ', '作用し続ける': 'keeps acting',
     '固体の結界には止められるが、エネルギーの結界は剥がせる。': 'Stopped by solid wards, but strips energy wards. ',
-    '固体の結界は貫けるが、エネルギーの結界には止められる。': 'Pierces solid wards, but is stopped by energy wards. ',
+    '設置壁は光線も止める。壊した一撃も、その壁で止まる。': 'Placed walls stop even beams, including the strike that breaks them. ',
     '六枚の面の壁で囲む城壁になる。': 'Becomes a six-sided castle wall. ', '一枚の面の壁になる。': 'Becomes a single flat wall. ', '形：{0}。': 'Shape: {0}. ',
     '放った後も糸でつながり、誘導・指示起爆（F）・回収（G）ができる（維持費がかかる）。': 'Stays threaded after release: guide it, detonate (F), recall (G). Upkeep applies. ',
     '追加性質：{0}。': 'Extra traits: {0}. ',
@@ -137,7 +138,7 @@ LANG.en = {
       drop: { name: 'Here', note: 'Placed where you stand' },
       orbit: { name: 'Orbit', note: 'Follows you and is always active. Single principle = enhancement. Solid = blades circle you' },
       relay: { name: 'Fan', note: 'Fires three ways. Dissipates quickly' },
-      beam: { name: 'Piercing Ray', note: 'A high-power ray that pierces foes and barely fades with range. Pierces solid wards; shatters energy wards if strong enough' }
+      beam: { name: 'Piercing Ray', note: 'A high-power ray that pierces foes and barely fades with range. Placed walls stop it, including the strike that breaks them' }
     },
     triggers: {
       contact: { name: 'Contact', note: 'Fires on hit or touch' }, fuse: { name: 'Timer', note: 'Fires when its shell breaks (fired shots burst at the aim point)' },
@@ -152,7 +153,7 @@ LANG.en = {
     links: { cut: { name: 'Cut', note: 'The thread is cut on release. No upkeep. It only does what it was built to do' }, hold: { name: 'Hold', note: 'Stays threaded. Costs upkeep, but can be guided, detonated (F), extended and recalled (G)' } },
     extraEffects: { motion: { note: 'adds knockback on hit' }, bind: { note: 'slows on hit; two stacks briefly root' }, divide: { note: 'strips wards and shells, +8% power' }, convert: { note: 'steals mana on hit' }, grow: { note: 'spawns homing shards on hit' }, phase: { note: 'resists reduction from wards and Harden' } },
     matters: {
-      energy: { name: 'Energy', note: 'Released as light and heat. Fast but fades at range. Pierces solid wards; stopped by energy wards' },
+      energy: { name: 'Energy', note: 'Released as light and heat. Fast but fades at range. Stopped by placed walls; area barriers retain matter matchups' },
       solid: { name: 'Solid', note: 'Hardened into crystal. Slow but heavy and holds its power. Strips energy wards; stopped by solid wards. Solid wards are very tough' },
       perfect: { name: 'Perfect', note: 'Layers solid and energy into a perfect ward that stops everything. Very costly: mana drains while it stands, you move slowly, and casting dissolves it (wards and orbit only)' }
     },
@@ -235,7 +236,7 @@ LANG.en = {
     rules: [
       'Build spells in the spell forge. Choose what happens (principles), its shape, how it travels, when it fires and what follows, and it becomes one of 27 phenomena.',
       'More parts mean more cost, longer chants and less power. Simple spells with few parts are the most efficient and hit hardest. The number of parts you can handle (control capacity) grows with level: 4 at LV0, 5 at LV3, 7 at LV7, 9 at LV12. Beyond it, a spell may misfire as you cast.',
-      'Spells are released as Solid or Energy. Energy pierces solid wards; solid strips energy wards; like stops like. Orbit a solid spell and blades circle you, both shield and weapon.',
+      'Spells are released as Solid or Energy. Placed walls stop both kinds and beams, even the strike that breaks them. Area barriers retain matter matchups. Orbit a solid spell and blades circle you, both shield and weapon.',
       'Released spells weaken the farther they travel. Rays and spears barely fade. Shapes (needle, arrow, sword, katana, scythe, axe, hammer, shuriken, chakram, spear, castle…) change speed, hitbox and ward-piercing power.',
       'A Perfect ward layers solid and energy and stops everything. But it is very costly: mana drains while it stands, you move slowly, and casting dissolves it.',
       'Spells of different crests collide in midair. Solid on solid: the weaker shatters. Energy on energy: they cancel. Energy piercing solid is greatly weakened and erodes the solid. A burst\'s blast snuffs foreign energy shots and knocks solid ones away. Rays burn away foreign energy shots.',
@@ -258,6 +259,7 @@ LANG.en = {
 // ═══ 中文（简体） ══════════════════════════════════════════════
 LANG.zh = {
   ui: {
+    '飛翔速度': '飞行速度', '弾が飛ぶ速さ。高速ほど消費魔力が増える。光線・自位置・周回は対象外。': '弹体的飞行速度。越快消耗越多魔力。光线、自位置和环绕不适用。',
     '・': '·', '！': '！', '／': '／', '{0}{1}。': '{0}{1}。',
     '自動（スマホや重い端末は軽く）': '自动（手机和低性能设备自动减轻）', '高い': '高', '軽い（スマホ向け）': '轻（适合手机）', '画質を軽くした': '已降低画质', '起爆': '起爆', '回収': '回收', '画質': '画质', '加速': '加速', '硬化': '硬化', '活性': '活性', '自分の紋の魔力を体へ書き込んだ': '将自身纹章的魔力写入了身体',
     '暴发': '暴发', '暴発': '暴发', '「{0}」は制御容量を超えていた': '「{0}」超出了控制容量', '術式が…崩れる！': '术式……要崩溃了！',
@@ -294,7 +296,7 @@ LANG.zh = {
     '「{0}」を固体にして、{1}。': '将「{0}」固体化，{1}。', 'エネルギーの弾は貫いてくる。エネルギーの結界は剥がせる。': '能量弹会贯穿而来。可剥离能量结界。', '糸でつながり、回収（G）できる。': '以丝线相连，可回收（G）。',
     '「{0}」を{1}。': '将「{0}」{1}。', '{0}の「{1}」を{2}{3}。': '将{0}的「{1}」{2}{3}。', '固体（結晶）にして': '固化为结晶后', 'エネルギーのまま': '保持能量',
     '周りに入った違う紋に{0}。': '对进入周围的异纹{0}。', '作用し続ける': '持续作用',
-    '固体の結界には止められるが、エネルギーの結界は剥がせる。': '会被固体结界挡住，但能剥离能量结界。', '固体の結界は貫けるが、エネルギーの結界には止められる。': '能贯穿固体结界，但会被能量结界挡住。',
+    '固体の結界には止められるが、エネルギーの結界は剥がせる。': '会被固体结界挡住，但能剥离能量结界。', '設置壁は光線も止める。壊した一撃も、その壁で止まる。': '设置的墙也会挡住光线，击碎墙的一击同样会被挡住。',
     '六枚の面の壁で囲む城壁になる。': '成为以六面墙围起的城墙。', '一枚の面の壁になる。': '成为一整面墙。', '形：{0}。': '形状：{0}。',
     '放った後も糸でつながり、誘導・指示起爆（F）・回収（G）ができる（維持費がかかる）。': '放出后仍以丝线相连，可诱导、指令起爆（F）、回收（G）（需维持消耗）。', '追加性質：{0}。': '追加性质：{0}。',
     '貫通光線は「細い波・接触・単発・糸：切断」で固定': '贯通光线固定为「细波·接触·单发·丝线：切断」', '貫通光線は光そのもの。質は「エネルギー」だけ': '贯通光线本身就是光，质只能是「能量」',
@@ -337,13 +339,13 @@ LANG.zh = {
       project: { name: '射出', note: '直线飞行。会被岩石与结界阻挡。越远威力越弱' }, homing: { name: '追踪', note: '弯向异纹的大魔力。维持丝线可引导至准星' },
       lob: { name: '投射', note: '以抛物线越过结界与岩石。落点有预告' }, sow: { name: '播种', note: '在脚边附近撒下种子。滚动后停下成为陷阱' },
       drop: { name: '原地', note: '设置在当前位置' }, orbit: { name: '环绕', note: '跟随施术者，始终启动。单一原理为强化术。固体化则刃环绕周身' },
-      relay: { name: '扇射', note: '向三个方向分射。容易消散' }, beam: { name: '贯通光线', note: '贯穿敌人的高输出光线，远处也几乎不衰减。贯穿固体结界，足够强时可击碎能量结界' }
+      relay: { name: '扇射', note: '向三个方向分射。容易消散' }, beam: { name: '贯通光线', note: '贯穿敌人的高输出光线，远处也几乎不衰减。设置的墙会挡住光线，击碎墙的一击也不会穿透' }
     },
     triggers: { contact: { name: '接触', note: '命中或接触时启动' }, fuse: { name: '定时', note: '外壳消散破裂时启动（射出会在瞄准点炸裂）' }, proximity: { name: '感知', note: '异纹进入范围时启动。停下的术式会成为陷阱' }, command: { name: '指令', note: '通过丝线的信号启动（F）。丝线自动维持' } },
     deploys: { single: { name: '单发', note: '按扩散方式作用一次' }, burst: { name: '炸裂', note: '扩大范围，瞬间炸裂' }, scatter: { name: '分裂', note: '分裂为追踪碎片' }, linger: { name: '残留', note: '领域长时间残留' }, sprinkle: { name: '散魔', note: '不攻击，将消耗化为魔力粒撒出。谁都能拾取，也可作为追踪的诱饵' }, siphon: { name: '吸魔', note: '夺取领域内敌人的魔力与魔素，并将周围魔素吸向施术者。威力减半' } },
     links: { cut: { name: '切断', note: '放出瞬间切断丝线。无维持消耗。只按术式行动' }, hold: { name: '维持', note: '持续以丝线相连。需维持消耗，但可引导、指令起爆（F）、延寿、回收（G）' } },
     extraEffects: { motion: { note: '命中时追加击飞' }, bind: { note: '命中时减速。叠两层会短暂束缚' }, divide: { note: '剥除结界与外壳，威力 +8%' }, convert: { note: '命中时夺取对方魔力' }, grow: { note: '命中时生成追踪碎片' }, phase: { note: '不易受结界与硬化的减伤影响' } },
-    matters: { energy: { name: '能量', note: '以光与热的形态放出。快但远处易消散。可贯穿固体结界，会被能量结界挡住' }, solid: { name: '固体', note: '凝固为结晶放出。慢但沉重，不易衰减。可剥离能量结界，会被固体结界挡住。固体结界非常坚固' }, perfect: { name: '完全', note: '叠合固体与能量的完全结界，什么都无法通过。但消耗极大，展开期间魔力持续减少、行动迟缓，咏唱术时解除（仅限结界与环绕）' } },
+    matters: { energy: { name: '能量', note: '以光与热的形态放出。快但远处易消散。会被设置的墙挡住，领域型结界保留质的相性' }, solid: { name: '固体', note: '凝固为结晶放出。慢但沉重，不易衰减。可剥离能量结界，会被固体结界挡住。固体结界非常坚固' }, perfect: { name: '完全', note: '叠合固体与能量的完全结界，什么都无法通过。但消耗极大，展开期间魔力持续减少、行动迟缓，咏唱术时解除（仅限结界与环绕）' } },
     shapes: {
       needle: { name: '针', note: '细而快。判定小' }, orb: { name: '球', note: '大而易中，稍慢' }, shard: { name: '结晶', note: '尖锐的结晶。对结界稍强' }, arrow: { name: '矢', note: '最细最快的矢。判定极小，射程远' },
       blade: { name: '剑', note: '宽刃直剑。判定大、打击重，远处变钝' }, katana: { name: '日本刀', note: '弯刃。斩穿一人，也能砍到后方对手' }, scythe: { name: '大镰', note: '弧形巨刃。判定最广，可横扫三人，射程短' },
@@ -410,7 +412,7 @@ LANG.zh = {
     rules: [
       '在「术式台」构筑术。选择发生什么（原理）、什么形状、如何送达、何时发生、之后如何，就会成为27种现象之一。',
       '部件越多，消耗与咏唱越重，威力也越低。部件少的朴素术式最省魔力、一击最重。可驾驭的部件数（控制容量）随等级成长：LV0为4、LV3为5、LV7为7、LV12为9。超过的术在施放瞬间可能暴发。',
-      '术以「固体」或「能量」放出。能量贯穿固体结界，固体剥离能量结界，同质相互阻挡。让固体环绕，刃会在周身旋转，既是盾也是武器。',
+      '术以「固体」或「能量」放出。设置的墙能挡住两种质和光线，击碎墙的一击也会被挡住。领域型结界保留质的相性。让固体环绕，刃会在周身旋转，既是盾也是武器。',
       '放出的术飞得越远越消散变弱。光线与枪几乎不衰减。形状（针·矢·剑·日本刀·大镰·斧·锤·手里剑·圆月轮·枪·城…）会改变速度、判定与对结界的贯穿力。',
       '「完全」结界叠合固体与能量，什么都无法通过。但消耗极大，展开期间魔力持续减少、行动迟缓，咏唱术时即解除。',
       '异纹的术在空中相撞。固体相撞弱者碎裂，能量相互抵消，能量贯穿固体时大幅减弱且固体也被削去。炸裂的冲击会吹散异纹的能量弹，弹开固体弹。光线会烧尽异纹的能量弹。',
@@ -433,6 +435,7 @@ LANG.zh = {
 // ═══ 한국어 ═════════════════════════════════════════════════════
 LANG.ko = {
   ui: {
+    '飛翔速度': '비행 속도', '弾が飛ぶ速さ。高速ほど消費魔力が増える。光線・自位置・周回は対象外。': '탄이 날아가는 속도. 빠를수록 마력 소모가 늘어난다. 광선·자기 위치·주회에는 적용되지 않는다.',
     '・': ' · ', '！': '!', '／': ' / ', '{0}{1}。': '{0} {1}. ',
     '自動（スマホや重い端末は軽く）': '자동(스마트폰과 느린 기기는 가볍게)', '高い': '높음', '軽い（スマホ向け）': '가벼움(스마트폰용)', '画質を軽くした': '화질을 낮췄다', '起爆': '기폭', '回収': '회수', '画質': '화질', '加速': '가속', '硬化': '경화', '活性': '활성', '自分の紋の魔力を体へ書き込んだ': '자신의 문장의 마력을 몸에 새겼다',
     '暴発': '폭발', '「{0}」は制御容量を超えていた': '「{0}」이(가) 제어 용량을 넘었다', '術式が…崩れる！': '술식이… 무너진다!',
@@ -469,7 +472,7 @@ LANG.ko = {
     '「{0}」を固体にして、{1}。': '「{0}」을(를) 고체로 만들어 {1}. ', 'エネルギーの弾は貫いてくる。エネルギーの結界は剥がせる。': '에너지 탄은 뚫고 들어온다. 에너지 결계는 벗겨낼 수 있다. ', '糸でつながり、回収（G）できる。': '실로 이어져 회수(G)할 수 있다. ',
     '「{0}」を{1}。': '「{0}」: {1}. ', '{0}の「{1}」を{2}{3}。': '{0}의 「{1}」 — {2}{3}. ', '固体（結晶）にして': '고체(결정)로 만들어 ', 'エネルギーのまま': '에너지 그대로 ',
     '周りに入った違う紋に{0}。': '주위에 들어온 다른 문장에 {0}. ', '作用し続ける': '계속 작용한다',
-    '固体の結界には止められるが、エネルギーの結界は剥がせる。': '고체 결계에는 막히지만, 에너지 결계는 벗겨낼 수 있다. ', '固体の結界は貫けるが、エネルギーの結界には止められる。': '고체 결계는 뚫지만, 에너지 결계에는 막힌다. ',
+    '固体の結界には止められるが、エネルギーの結界は剥がせる。': '고체 결계에는 막히지만, 에너지 결계는 벗겨낼 수 있다. ', '設置壁は光線も止める。壊した一撃も、その壁で止まる。': '설치한 벽은 광선도 막으며, 벽을 부순 공격도 그곳에서 멈춘다. ',
     '六枚の面の壁で囲む城壁になる。': '여섯 면의 벽으로 둘러싼 성벽이 된다. ', '一枚の面の壁になる。': '한 장의 면 벽이 된다. ', '形：{0}。': '형태: {0}. ',
     '放った後も糸でつながり、誘導・指示起爆（F）・回収（G）ができる（維持費がかかる）。': '날린 뒤에도 실로 이어져 유도·지시 기폭(F)·회수(G)가 가능하다(유지비가 든다). ', '追加性質：{0}。': '추가 성질: {0}. ',
     '貫通光線は「細い波・接触・単発・糸：切断」で固定': '관통 광선은 「가는 파동·접촉·단발·실: 절단」으로 고정', '貫通光線は光そのもの。質は「エネルギー」だけ': '관통 광선은 빛 그 자체. 질은 「에너지」뿐',
@@ -512,13 +515,13 @@ LANG.ko = {
       project: { name: '사출', note: '직진한다. 바위와 결계에 막힌다. 멀수록 위력이 흩어진다' }, homing: { name: '추적', note: '다른 문장의 큰 마력 쪽으로 휜다. 실을 유지하면 조준점으로 유도할 수 있다' },
       lob: { name: '투사', note: '포물선으로 결계와 바위를 넘는다. 착지점이 예고된다' }, sow: { name: '파종', note: '발밑 근처에 씨앗을 뿌린다. 굴러가 멈추고 함정이 된다' },
       drop: { name: '제자리', note: '지금 있는 곳에 설치한다' }, orbit: { name: '주회', note: '술자를 따라다니며 항상 기동한다. 단일 원리면 강화술. 고체로 하면 칼날이 주위를 돈다' },
-      relay: { name: '부채 사격', note: '세 방향으로 나눠 쏜다. 흩어지기 쉽다' }, beam: { name: '관통 광선', note: '적을 꿰뚫는 고출력 광선. 멀리서도 거의 약해지지 않는다. 고체 결계는 뚫고, 에너지 결계도 강하면 부순다' }
+      relay: { name: '부채 사격', note: '세 방향으로 나눠 쏜다. 흩어지기 쉽다' }, beam: { name: '관통 광선', note: '적을 꿰뚫는 고출력 광선. 멀리서도 거의 약해지지 않는다. 설치한 벽에 막히며, 벽을 부순 일격도 관통하지 않는다' }
     },
     triggers: { contact: { name: '접촉', note: '명중·접촉 시 기동' }, fuse: { name: '시한', note: '껍질이 흩어져 깨지는 순간 기동(사출은 조준점에서 작렬)' }, proximity: { name: '감지', note: '다른 문장이 범위에 들어오면 기동. 멈춘 술식은 함정이 된다' }, command: { name: '지시', note: '실을 통한 신호로 기동(F). 실은 자동으로 유지된다' } },
     deploys: { single: { name: '단발', note: '퍼짐 방식대로 한 번 작용한다' }, burst: { name: '작렬', note: '범위를 넓혀 한순간에 작렬한다' }, scatter: { name: '분열', note: '추적하는 파편으로 갈라진다' }, linger: { name: '잔류', note: '영역이 오래 남는다' }, sprinkle: { name: '산마', note: '공격하지 않고 소모를 마력 알갱이로 뿌린다. 누구나 주울 수 있고 추적의 미끼가 된다' }, siphon: { name: '흡마', note: '영역 안 적의 마력과 마소를 빼앗고 주위 마소를 술자에게 끌어온다. 위력 절반' } },
     links: { cut: { name: '절단', note: '쏘는 순간 실을 끊는다. 유지비 없음. 술식대로만 움직인다' }, hold: { name: '유지', note: '실로 계속 이어진다. 유지비가 들지만 유도·지시 기폭(F)·연장·회수(G)가 가능' } },
     extraEffects: { motion: { note: '명중 시 넉백 추가' }, bind: { note: '명중 시 둔화. 두 번 겹치면 잠시 속박' }, divide: { note: '결계·껍질을 벗기고 위력 +8%' }, convert: { note: '명중 시 상대의 마력을 빼앗는다' }, grow: { note: '명중 시 추적 파편을 낳는다' }, phase: { note: '결계·경화의 감쇠를 덜 받는다' } },
-    matters: { energy: { name: '에너지', note: '빛과 열 그대로 쏜다. 빠르지만 멀리서 흩어지기 쉽다. 고체 결계를 뚫고, 에너지 결계에 막힌다' }, solid: { name: '고체', note: '결정으로 굳혀 쏜다. 느리지만 무겁고 잘 약해지지 않는다. 에너지 결계를 벗기고, 고체 결계에 막힌다. 고체 결계는 매우 단단하다' }, perfect: { name: '완전', note: '고체와 에너지를 겹친 완전한 결계. 아무것도 통과시키지 않는다. 다만 소모가 매우 크고, 펼친 동안 마력이 계속 줄며 발이 무거워지고, 술을 외우면 풀린다(결계·주회만)' } },
+    matters: { energy: { name: '에너지', note: '빛과 열 그대로 쏜다. 빠르지만 멀리서 흩어지기 쉽다. 설치한 벽에 막히며 영역형 결계에는 질의 상성이 적용된다' }, solid: { name: '고체', note: '결정으로 굳혀 쏜다. 느리지만 무겁고 잘 약해지지 않는다. 에너지 결계를 벗기고, 고체 결계에 막힌다. 고체 결계는 매우 단단하다' }, perfect: { name: '완전', note: '고체와 에너지를 겹친 완전한 결계. 아무것도 통과시키지 않는다. 다만 소모가 매우 크고, 펼친 동안 마력이 계속 줄며 발이 무거워지고, 술을 외우면 풀린다(결계·주회만)' } },
     shapes: {
       needle: { name: '침', note: '가늘고 빠르다. 판정이 작다' }, orb: { name: '구', note: '크고 맞히기 쉽지만 조금 느리다' }, shard: { name: '결정', note: '뾰족한 결정. 결계에 조금 강하다' }, arrow: { name: '화살', note: '가장 가늘고 빠른 화살. 판정은 아주 작지만 멀리 닿는다' },
       blade: { name: '검', note: '폭이 넓은 직검. 판정이 크고 묵직하지만 멀리서는 무뎌진다' }, katana: { name: '일본도', note: '휜 칼날. 한 명을 베고 지나가 뒤의 상대에게도 닿는다' }, scythe: { name: '큰낫', note: '호를 그리는 큰 칼날. 판정이 가장 넓고 세 명까지 벤다. 사거리가 짧다' },
@@ -587,7 +590,7 @@ LANG.ko = {
     rules: [
       '술은 「술식대」에서 짠다. 무엇이 일어나는지(원리)·어떤 형태인지·어떻게 닿는지·언제 일어나는지·일어난 뒤 어떻게 되는지를 고르면 27가지 현상 중 하나가 된다.',
       '부품이 늘수록 소모와 영창이 무거워지고 위력도 떨어진다. 부품이 적은 단순한 술일수록 연비가 좋고 한 방이 무겁다. 다룰 수 있는 부품 수(제어 용량)는 레벨로 자란다: LV0에서 4, LV3에서 5, LV7에서 7, LV12에서 9. 넘는 술은 쓰는 순간 폭발할 수 있다.',
-      '술은 「고체」나 「에너지」로 쏜다. 에너지는 고체 결계를 뚫고, 고체는 에너지 결계를 벗긴다. 같은 질끼리는 막힌다. 고체를 주회시키면 칼날이 주위를 돌며 방패도 무기도 된다.',
+      '술은 「고체」나 「에너지」로 쏜다. 설치한 벽은 두 질과 광선을 막고, 벽을 부순 공격도 막는다. 영역형 결계에는 질의 상성이 적용된다. 고체를 주회시키면 칼날이 주위를 돌며 방패도 무기도 된다.',
       '쏜 술은 멀리 갈수록 흩어져 약해진다. 광선과 창은 거의 약해지지 않는다. 형태(침·화살·검·일본도·큰낫·도끼·망치·수리검·원월륜·창·성…)에 따라 속도·판정·결계 관통력이 달라진다.',
       '「완전」 결계는 고체와 에너지를 겹쳐 아무것도 통과시키지 않는다. 다만 소모가 매우 크고, 펼친 동안 마력이 계속 줄며 발이 무거워지고, 술을 외우면 풀린다.',
       '다른 문장의 술끼리는 공중에서 부딪친다. 고체끼리는 충돌해 약한 쪽이 부서지고, 에너지끼리는 상쇄하며, 에너지가 고체를 뚫으면 크게 약해지고 고체도 깎인다. 작렬의 폭풍은 다른 문장의 에너지 탄을 날려 끄고 고체 탄을 튕겨낸다. 광선은 다른 문장의 에너지 탄을 태워 없앤다.',
