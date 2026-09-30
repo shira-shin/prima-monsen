@@ -282,6 +282,8 @@ const MOVE_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'Arro
 // 術式台を開ける場面：ロビー・散った後・修練場の中
 const canForge = () => mode !== 'play' || (world && world.room.practice);
 window.addEventListener('keydown', e => {
+  // ボタンのEnter・Spaceは、そのボタンを押す。ロビー入場や回避で横取りしない
+  if (document.activeElement?.tagName === 'BUTTON' && ['Enter', 'Space'].includes(e.code)) return;
   if (typing()) { if (e.key === 'Enter' && mode === 'lobby' && document.activeElement === $('nameInput')) { e.preventDefault(); join(); } return; }
   unlockAudio();
   if (e.repeat && !MOVE_KEYS.includes(e.code)) return;
@@ -367,7 +369,7 @@ applyQuality();
 function autoTarget(me, ang) {
   let best = null, bs = 1e9;
   for (const u of world.units) {
-    if (!u.alive || u === me) continue;
+    if (!S.visibleTo(me, u) || !u.alive || u === me) continue;
     const dx = u.x - me.x, dy = u.y - me.y, d = hyp(dx, dy);
     if (d > 820) continue;
     let sc = d;
@@ -539,11 +541,11 @@ function consumeEvents() {
         const big = e.t >= D.chant.voiceAt || e.named;
         castCircles.push({ id: u.id, a: e.a, b: e.b, col: e.col, words: chantWords(r).join(L('・')), name: e.name, t: 0, life: e.t + 0.3, total: e.t, big, rot: rnd(0, TAU) });
         if (e.id === meId) {
-          chantPad(u.id, r, e.t, 1);
+          chantPad(u.id, S.lookOf(r, 0), e.t, 1);
           if (e.named) speak(`${e.name}！`, 'spell');
           if (big) say(u, `${e.name}！`, 'chant');
         } else if (big) {
-          withPan(u.x, () => chantPad(u.id, r, e.t, 0.35 * vol(u.x, u.y)));
+          withPan(u.x, () => chantPad(u.id, S.lookOf(r, 0), e.t, 0.35 * vol(u.x, u.y)));
           if (Math.random() < 0.6) say(u, `${e.name}！`, 'chant');
         }
         break;
@@ -570,7 +572,7 @@ function consumeEvents() {
       case 'buff': {
         const u = S.unitById(world, e.id);
         if (u && near(u.x, u.y)) { circleFx(u.x, u.y + u.r * 0.3, u.r * 2.4, e.col, 0.8); ringFx(u.x, u.y, u.r, u.r * 2.8, e.col, 0.55, 3); principleFx(e.kind, u.x, u.y, u.r * 1.6, e.col, null, 0.6); }
-        if (e.id === meId) { sfx('buff', 1); toast({ motion: L('加速'), bind: L('硬化'), grow: L('活性') }[e.kind], L('自分の紋の魔力を体へ書き込んだ')); }
+        if (e.id === meId) { sfx('buff', 1); toast(L('纏：{0}', D.principles[e.kind].name), L('自分の紋の魔力を体へ書き込んだ')); }
         break;
       }
       case 'misfire': {
@@ -724,10 +726,6 @@ function consumeEvents() {
         lineFx('bolt', e.x1, e.y1, e.x2, e.y2, e.col, 0.3, 3);
         if (near(e.x2, e.y2)) { floatText(e.x2, e.y2 - 30, L('誘爆'), e.col, 17); shake(3); }
         break;
-      case 'aegisEnd':
-        if (near(e.x, e.y)) { ringFx(e.x, e.y, 20, 140, '#ffe29a', 0.5, 4); flash(e.x, e.y, 120, '#ffe29a', 0.25); sfxAt('shatter', 0.7 * vol(e.x, e.y), null, e.x); }
-        if (e.id === meId) toast(L('完全結界が解けた'), e.why === 'mp' ? L('魔力が尽きた') : L('術を唱えると解ける'));
-        break;
       case 'catch':
         // 戻る術を受け止めると、魔力の一部が戻る
         if (near(e.x, e.y)) { spray(e.x, e.y, e.col, 6, 160, null, Math.PI, 2); ringFx(e.x, e.y, 4, 30, 'blue', 0.3, 2); }
@@ -847,7 +845,7 @@ function updateFx(dt) {
   }
   // 続く効果：詠唱中の光の粒、活性の光、毒の泡、加速の残光、泉から立ちのぼる魔素
   for (const u of world.units) {
-    if (!u.alive || hyp(u.x - cam.x, u.y - cam.y) > (vw + vh) / cam.z) continue;
+    if (!u.alive || !S.visibleTo(S.hero(world), u) || hyp(u.x - cam.x, u.y - cam.y) > (vw + vh) / cam.z) continue;
     if (u.casting) {
       // 詠唱中：光が足元へ渦を巻いて集まり、杖先で電弧がはぜ、体から力が立ちのぼる
       const col = S.recipeResult(u.spells[u.casting.slot]).color;
@@ -856,7 +854,6 @@ function updateFx(dt) {
       if (Math.random() < dt * 16) parts.push({ kind: 'rise', x: u.x + rnd(-u.r, u.r) * 0.8, y: u.y + u.r * 0.3, vx: rnd(-8, 8), vy: -rnd(90, 170), r: rnd(1.4, 2.6), ink: col, t: 0, life: rnd(0.4, 0.8) });
     }
     if (u.vitalT > 0 && Math.random() < dt * 8) parts.push({ kind: 'petal', x: u.x + rnd(-u.r, u.r), y: u.y - u.r * rnd(0, 2), vx: rnd(-10, 10), vy: -40, r: rnd(2, 3.5), ink: 'green', t: 0, life: 0.9, rot: 0, spin: 3 });
-    if (u.poisonT > 0 && Math.random() < dt * 10) parts.push({ kind: 'rise', x: u.x + rnd(-u.r, u.r), y: u.y - u.r * rnd(0, 1.6), vx: 0, vy: -40, r: rnd(1.5, 3), ink: 'green', t: 0, life: 0.6 });
     if (u.hasteT > 0 && Math.random() < dt * 14) { const a = Math.atan2(u.vy, u.vx) + Math.PI; parts.push({ kind: 'spark', x: u.x + rnd(-u.r, u.r) * 0.6, y: u.y + rnd(-u.r, u.r) * 0.6, vx: Math.cos(a) * 90, vy: Math.sin(a) * 90, r: 2, ink: 'orange', t: 0, life: 0.35 }); }
   }
   for (const s of world.springs) {
@@ -1206,10 +1203,15 @@ function updateBgm(dt) {
 function toggleSfx() { profile.sfx = !profile.sfx; saveProfile(); syncSoundButtons(); }
 function toggleBgm() { profile.bgm = !profile.bgm; saveProfile(); syncSoundButtons(); playBgm(); }
 
-// 詠唱文：術を組んだ部品から作る（例：「疾く奔れ・理を割り・貫け」）。大魔法陣の外輪を巡る文字にだけ使う
+// 詠唱文：段ごとの原理と器から作る（例：「解けよ・風を裂き・触れて・結び、固まれ・満ちよ」）。大魔法陣の外輪を巡る文字にだけ使う
 function chantWords(r) {
-  const C = D.chant;
-  return [C.a[r.a], C.b[r.b], C.form[r.form], C.behavior[r.behavior], C.deploy[r.deploy]].filter(Boolean);
+  const C = D.chant, out = [];
+  r.stages.forEach((st, i) => {
+    const look = S.lookOf(r, i);
+    if (i) out.push(C.then[r.stages[i - 1].then]);
+    out.push(C.a[look.a], look.b !== 'none' ? C.b[look.b] : '', C.vessel[st.vessel]);
+  });
+  return out.filter(Boolean);
 }
 // 声：いちばん人の声に近い日本語の声を選ぶ（ニューラル音声を優先）。設定で選んだ声があればそれを使う
 const voice = { lastSpell: 0, jp: null };
@@ -1282,6 +1284,16 @@ function draw() {
   ctx.fillStyle = floorPat;
   ctx.fillRect(L, T, Rt - L, B - T);
   drawArena(inView);
+  // 手ほどきでは、壁を置く地点か課題の人形の足元を明示する
+  if (tutor.on && tutor.i < 6) {
+    const target = world.units.find(u => u.dummy && u.alive);
+    const x = tutor.i === 1 ? 170 : target?.x, y = tutor.i === 1 ? 0 : target?.y;
+    if (x !== undefined) {
+      ctx.save(); ctx.strokeStyle = hex('blue'); ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(x, y, 25 + Math.sin(world.t * 4) * 3, 0, TAU); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x - 35, y); ctx.lineTo(x + 35, y); ctx.moveTo(x, y - 35); ctx.lineTo(x, y + 35); ctx.stroke(); ctx.restore();
+    }
+  }
 
   // 術の光が床を照らす
   updateTrails();
@@ -1301,21 +1313,22 @@ function draw() {
   drawMotes(inView);
   for (const k of world.rocks) if (inView(k.x, k.y, k.r + 20)) drawRock(k);
   // 結界は奥（上）から順に描く（面の壁が手前の壁に重なる）
-  for (const g of world.wards.filter(g => g.hp > 0 && inView(g.x, g.y, g.r + (g.len || 0) / 2 + 60)).sort((a, b) => a.y - b.y)) drawWard(g);
+  const seer = S.hero(world), seen = o => S.visibleSpell(seer, o);
+  for (const g of world.wards.filter(g => g.hp > 0 && seen(g) && inView(g.x, g.y, g.r + (g.len || 0) / 2 + 60)).sort((a, b) => a.y - b.y)) drawWard(g);
   // 罠（待機中の術式）と投射の着地点
-  for (const s of world.spells) if (!s.done && (s.state === 'wait' || s.kind === 'lob') && inView(s.x, s.y, s.radius + 40)) drawTrap(s);
+  for (const s of world.spells) if (!s.done && seen(s) && (s.state === 'wait' || s.kind === 'lob') && inView(s.x, s.y, s.radius + 40)) drawTrap(s);
   // 囮（散魔の光・鏡界の像）
   for (const d of world.decoys) if (inView(d.x, d.y, 80)) drawDecoy(d);
 
   // 術者は奥（上）から順に描く
   const top = world.ranking[0];
-  const vis = world.units.filter(u => u.alive && inView(u.x, u.y - u.r * 2, u.r * 4));
+  const vis = world.units.filter(u => u.alive && S.visibleTo(S.hero(world), u) && inView(u.x, u.y - u.r * 2, u.r * 4));
   vis.sort((a, b) => a.y - b.y);
   // 詠唱の大魔法陣は術者の足元（術者より先に描く）
   for (const c of castCircles) drawCastCircle(c);
   ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
   // 周回の城壁のうち、術者より奥（上）にあるものは術者より先に描く
-  for (const s of world.spells) if (!s.done && s.kind === 'orbiter' && s.shape === 'castle' && inView(s.x, s.y, 80)) { const o = S.unitById(world, s.owner); if (o && s.y < o.y) drawOrbiter(s); }
+  for (const s of world.spells) if (!s.done && s.kind === 'orbiter' && s.shape === 'castle' && seen(s) && inView(s.x, s.y, 80)) { const o = S.unitById(world, s.owner); if (o && s.y < o.y) drawOrbiter(s); }
   for (const u of vis) drawMage(u, u === top);
 
   // 糸（④）：術者の杖と、糸でつながった術式を結ぶ
@@ -1325,9 +1338,9 @@ function draw() {
 
   // 飛ぶ術式と火花は光として足し合わせる
   ctx.globalCompositeOperation = 'lighter';
-  for (const s of world.spells) if (!s.done && s.state === 'fly' && s.kind === 'proj' && inView(s.x, s.y, 60)) drawFlyer(s);
-  for (const s of world.spells) if (!s.done && s.state === 'fly' && s.kind === 'lob' && inView(s.x, s.y, 200)) drawLob(s);
-  for (const s of world.spells) if (!s.done && s.kind === 'orbiter' && inView(s.x, s.y, 80)) { if (s.shape === 'castle') { const o = S.unitById(world, s.owner); if (o && s.y < o.y) continue; } drawOrbiter(s); }
+  for (const s of world.spells) if (!s.done && s.state === 'fly' && s.kind === 'proj' && seen(s) && inView(s.x, s.y, 60)) drawFlyer(s);
+  for (const s of world.spells) if (!s.done && s.state === 'fly' && s.kind === 'lob' && seen(s) && inView(s.x, s.y, 200)) drawLob(s);
+  for (const s of world.spells) if (!s.done && s.kind === 'orbiter' && seen(s) && inView(s.x, s.y, 80)) { if (s.shape === 'castle') { const o = S.unitById(world, s.owner); if (o && s.y < o.y) continue; } drawOrbiter(s); }
   for (const p of parts) if (inView(p.x, p.y, (p.r1 || p.r || 10) + 20) || p.x2 !== undefined) drawPart(p);
   ctx.globalCompositeOperation = 'source-over';
   ctx.globalAlpha = 1;
@@ -1631,36 +1644,17 @@ function drawRock(k) {
   drawRune(ctx, k.id, k.r * 0.28);
   ctx.restore();
 }
-// 領域：残留・吸魔・結界（重縛結界・位相転換・反力変換）・周回・生体転写・魔素収束
+// 場：円（結があれば弾を止める結界）と纏
 function drawZone(z) {
+  if (z.kind === 'body' ? !S.visibleTo(S.hero(world), S.unitById(world, z.owner)) : !S.visibleSpell(S.hero(world), z)) return;
   const t = world.t, c = z.col, f = Math.min(1, z.t / Math.max(0.01, z.life));
   const fade = f > 0.85 ? (1 - f) / 0.15 : 1;
   ctx.save();
   ctx.translate(z.x, z.y);
   if (z.barrier) {
-    // 結界：六角の殻。反力変換は鏡の弧、位相転換はゆらぐ膜。固体の結界は黒い結晶の板で、エネルギーの結界は光の膜
+    // 結界：六角の殻。固体の結界は黒い結晶の板で、エネルギーの結界は光の膜
     // 削られるほど膜がちらつき、ひびが走る
     const hpF = z.max > 0 ? Math.max(0, z.hp / z.max) : 1, flick = hpF < 0.5 ? 0.6 + Math.random() * 0.4 : 1;
-    if (z.matter === 'perfect') {
-      // 完全の結界：黒い結晶の板と金白の光の膜の二重。ゆっくり回る刻印の環
-      ctx.fillStyle = 'rgba(10,8,14,.55)';
-      ctx.beginPath(); for (let i = 0; i <= 6; i++) { const a2 = i / 6 * TAU; i ? ctx.lineTo(Math.cos(a2) * z.zr, Math.sin(a2) * z.zr) : ctx.moveTo(z.zr, 0); } ctx.fill();
-      ctx.globalCompositeOperation = 'lighter';
-      const pulse = 0.75 + Math.sin(t * 4) * 0.2;
-      ctx.globalAlpha = 0.28 * fade * pulse;
-      ctx.drawImage(glow('#ffe29a'), -z.zr * 1.3, -z.zr * 1.3, z.zr * 2.6, z.zr * 2.6);
-      ctx.globalAlpha = fade;
-      for (const [rr, w2, a, rot] of [[1, 10, 0.18, 0.3], [1, 2.4, 0.95, 0.3], [0.9, 1.4, 0.7, -0.5]]) {
-        ctx.save(); ctx.rotate(t * rot);
-        ctx.strokeStyle = `rgba(255,226,150,${a})`; ctx.lineWidth = w2;
-        ctx.beginPath(); for (let i = 0; i <= 6; i++) { const a2 = i / 6 * TAU; i ? ctx.lineTo(Math.cos(a2) * z.zr * rr, Math.sin(a2) * z.zr * rr) : ctx.moveTo(z.zr * rr, 0); } ctx.stroke();
-        ctx.restore();
-      }
-      ctx.strokeStyle = 'rgba(255,250,240,.9)'; ctx.lineWidth = 1.4;
-      ctx.rotate(-t * 0.6); runeRing(ctx, z.zr * 0.8, 18, 5, z.id);
-      ctx.restore();
-      return;
-    }
     if (z.matter === 'solid') {
       ctx.globalAlpha = 0.5 * fade;
       ctx.fillStyle = 'rgba(14,11,20,.7)';
@@ -1943,12 +1937,12 @@ function drawTrap(s) {
   ctx.beginPath(); ctx.arc(0, 0, 12, 0, TAU); ctx.stroke();
   runeRing(ctx, 17, 6, 3, s.id);
   ctx.rotate(-t * 1.2);
-  const trig = s.r.trigger;
-  if (trig === 'proximity') { ctx.setLineDash([3, 9]); ctx.strokeStyle = rgba(c, 0.35); ctx.beginPath(); ctx.arc(0, 0, s.radius * 0.7, 0, TAU); ctx.stroke(); ctx.setLineDash([]); }
-  if (trig === 'fuse') { const left = Math.max(0, s.fuseT / (1.2 * s.r.duration)); ctx.strokeStyle = rgba(BONE, 0.8); ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(0, 0, 22, -Math.PI / 2, -Math.PI / 2 + TAU * left); ctx.stroke(); }
+  // 散逸していく殻：残りの寿命を輪で示す
+  const left = Math.max(0, 1 - s.wait / (D.RULES.wait * s.st.time));
+  ctx.strokeStyle = rgba(BONE, 0.6); ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(0, 0, 22, -Math.PI / 2, -Math.PI / 2 + TAU * left); ctx.stroke();
   ctx.font = `700 16px 'Zen Kaku Gothic New', sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillStyle = rgba(BONE, 0.9);
-  ctx.fillText(D.triggers[trig].glyph, 0, 1);
+  ctx.fillText(D.craft.thens[s.st.then].glyph, 0, 1);
   ctx.restore();
 }
 // 囮：散魔の光（追尾を引く）と、重層鏡界の像
@@ -1981,7 +1975,7 @@ function drawThreads(inView) {
     ctx.beginPath(); ctx.moveTo(tip.x, tip.y); ctx.quadraticCurveTo(mx, my, o.x, o.y); ctx.stroke();
   };
   for (const u of world.units) {
-    if (!u.alive) continue;
+    if (!u.alive || !S.visibleTo(S.hero(world), u)) continue;
     for (const s of world.spells) if (s.owner === u.id && s.linked && !s.done) one(s, u);
     for (const z of world.zones) if (z.owner === u.id && z.linked && z.kind !== 'orbit') one(z, u);
     for (const g of world.wards) if (g.owner === u.id && g.linked && g.hp > 0) one(g, u);
@@ -2016,11 +2010,13 @@ function staffTip(u) { const p = staffPose(u); return { x: p.tx, y: p.ty }; }
 function grandeur(u) { const l = u.level || 0; return l >= 12 ? 3 : l >= 7 ? 2 : l >= 3 ? 1 : 0; }
 const GOLD = '#d9b86a', GOLD_HI = '#ffe19a';
 function drawMage(u, isTop, image = false) {
+  const viewer = world && S.hero(world);
+  if (!image && viewer && !S.visibleTo(viewer, u)) return;
   const t = world.t, r = u.r, c = hex(u.ink);
   const { hx, hy, tx, ty, face, s, fy, aiming } = staffPose(u);
   const speed = hyp(u.vx, u.vy), walk = Math.min(1, speed / 220);
   const bob = -Math.abs(Math.sin(t * 9 + u.id)) * 1.6 * s * walk + Math.sin(t * 2 + u.id) * 0.4 * s;
-  const ghost = image || u.phaseT > 0 || u.dashT > 0;
+  const ghost = image || u.phaseT > 0 || u.dashT > 0 || (u.cloakT > 0 && u.revealT <= 0);
   const lean = Math.max(-0.2, Math.min(0.2, u.vx / 800));
   const casting = !!u.casting;
   const sway = -u.vx / 260 * 6 * s + Math.sin(t * 3 + u.id) * 0.8 * s;   // 外套は進む向きと逆へなびく
@@ -2203,7 +2199,8 @@ function drawMage(u, isTop, image = false) {
   ctx.fillStyle = hurt ? '#fff' : rgba(c, 1);
   for (const e of [-1, 1]) {
     const ex2 = hxo + face * X(2.2) + e * X(1.55), ey2 = Y(-46.4);
-    ctx.beginPath(); ctx.ellipse(ex2, ey2, X(0.95), X(0.55) * blink, 0, 0, TAU); ctx.fill();
+    // キービジュアルと同じ、影の奥に浮かぶ縦長の光る目
+    ctx.beginPath(); ctx.ellipse(ex2, ey2, X(0.8), X(1.1) * blink, 0, 0, TAU); ctx.fill();
     ctx.globalAlpha = 0.5; ctx.drawImage(glow(u.ink), ex2 - X(3), ey2 - X(3), X(6), X(6)); ctx.globalAlpha = 1;
   }
   ctx.restore();
@@ -2293,17 +2290,17 @@ function drawLights(inView) {
   ctx.save();
   ctx.globalCompositeOperation = 'lighter';
   for (const sp of world.spells) {
-    if (sp.done || !inView(sp.x, sp.y, 160)) continue;
+    if (sp.done || !inView(sp.x, sp.y, 160) || !S.visibleSpell(S.hero(world), sp)) continue;
     ctx.globalAlpha = sp.state === 'fly' ? 0.2 : 0.1;
     ctx.drawImage(glow(sp.col), sp.x - 120, sp.y - 120, 240, 240);
   }
   for (const z of world.zones) {
-    if (!inView(z.x, z.y, z.zr * 1.5)) continue;
+    if (!inView(z.x, z.y, z.zr * 1.5) || (z.kind === 'body' ? !S.visibleTo(S.hero(world), S.unitById(world, z.owner)) : !S.visibleSpell(S.hero(world), z))) continue;
     ctx.globalAlpha = 0.08;
     ctx.drawImage(glow(z.col), z.x - z.zr * 1.5, z.y - z.zr * 1.5, z.zr * 3, z.zr * 3);
   }
   for (const u of world.units) {
-    if (!u.alive || !inView(u.x, u.y, 200)) continue;
+    if (!u.alive || !S.visibleTo(S.hero(world), u) || !inView(u.x, u.y, 200)) continue;
     const tip = staffTip(u);
     ctx.globalAlpha = u.casting ? 0.28 : 0.1;
     const rr = u.casting ? 150 + u.r * 2 : 90;
@@ -2619,21 +2616,20 @@ function drawOrbiter(s) {
   if (s.shape === 'castle') {
     // 城：術者を囲む城壁の一枚（円の接線の向きに立つ）
     const fade = Math.max(0, Math.min(1, (s.life - s.t) / 0.6, s.age / 0.2));
-    drawRampart(s.x, s.y, s.ang + Math.PI / 2, s.size * 1.9, s.size * 0.32, 30, s.col, Math.max(0, s.hp / (D.RULES.orbiter.hp * D.shapes.castle.orbit.hp)), s.id, fade);
-    if (s.matter === 'perfect') { ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = 0.35 * fade; ctx.drawImage(glow('#ffe29a'), s.x - s.size * 1.4, s.y - 50, s.size * 2.8, 70); ctx.restore(); }
+    drawRampart(s.x, s.y, s.ang + Math.PI / 2, s.size * 1.9, s.size * 0.32, 30, s.col, Math.max(0, s.hp / s.max), s.id, fade);
     return;
   }
   const c = hex(s.col), fade = Math.max(0, Math.min(1, (s.life - s.t) / 0.6, s.age / 0.2));
   ctx.lineCap = 'round';
   // 城壁はほとんど回らないので、回った跡の光は描かない
-  if (s.shape !== 'castle') for (let k = 0; k < 4; k++) {
+  if (s.shape !== 'castle' && (s.r.weave !== 2 || s.r.anchor === 'orbit')) for (let k = 0; k < 4; k++) {
     ctx.strokeStyle = rgba(c, 0.32 * fade * (1 - k / 4)); ctx.lineWidth = s.size * (0.7 - k * 0.12);
     ctx.beginPath(); ctx.arc(o.x, o.y, s.orad, s.ang - 0.18 * (k + 1), s.ang - 0.18 * k); ctx.stroke();
   }
   ctx.globalAlpha = 0.18 * fade;
   ctx.drawImage(glow(s.col), s.x - s.size * 4, s.y - s.size * 4, s.size * 8, s.size * 8);
   ctx.globalAlpha = fade;
-  ctx.save(); ctx.translate(s.x, s.y - 6); ctx.rotate(s.shape === 'castle' ? s.ang : s.ang + Math.PI / 2);
+  ctx.save(); ctx.translate(s.x, s.y - 6); ctx.rotate(s.r.weave === 2 && s.r.anchor !== 'orbit' ? s.ang : s.ang + Math.PI / 2);
   drawWeapon(ctx, s.shape, s.size * (SPINNERS.includes(s.shape) ? 0.9 : s.shape === 'castle' ? 0.62 : 0.78), s.col, s.matter, world.t * 16 + s.id, 8);
   ctx.restore();
   ctx.globalAlpha = 1;
@@ -2686,11 +2682,15 @@ function drawStatus(u, s, fy) {
   // 殻の中心と大きさ：足元からフードの上まで包む
   const sy = fy - 29 * s, rx = 21 * s + 5, ry = 36 * s + 5;
   if (u.spawnShield > 0) drawShell(u.x, sy, rx + 3, ry + 3, hex(BONE), 0.3 + Math.sin(t * 4) * 0.08, false, 0.8);
-  if (u.shield > 0 || u.hardenT > 0) drawShell(u.x, sy, rx, ry, hex('blue'), u.hardenT > 0 ? 1 : 0.8, true, 1.4);
-  if (u.reflectT > 0) drawShell(u.x, sy, rx + 5, ry + 5, hex('purple'), 0.9, false, -4);
-  if (u.aegis) { drawShell(u.x, sy, rx + 8, ry + 8, '#ffe29a', 0.9 + Math.sin(t * 5) * 0.1, true, 1); drawShell(u.x, sy, rx + 3, ry + 3, '#fffaf0', 0.5, false, -2); }
+  if (u.hardenT > 0) drawShell(u.x, sy, rx, ry, hex('blue'), 0.6 + u.bodyArmor, true, 1.4);
+  if (u.impactT > 0) drawShell(u.x, sy, rx + 5, ry + 5, hex('purple'), 0.9, false, -4);
   ctx.save();
   ctx.translate(u.x, cy);
+  if (u.tetherT > 0) {
+    ctx.strokeStyle = rgba(hex('blue'), .7); ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(0, 24 * s); ctx.lineTo(u.tetherX - u.x, u.tetherY - cy); ctx.stroke();
+    ctx.beginPath(); ctx.arc(u.tetherX - u.x, u.tetherY - cy, 8, 0, TAU); ctx.stroke();
+  }
   if (u.slowAmt > 0) {
     ctx.strokeStyle = rgba(hex('blue'), 0.9); ctx.lineWidth = 2;
     for (let i = 0; i < 3; i++) { const a = t * 2 + i * TAU / 3; ctx.beginPath(); ctx.arc(Math.cos(a) * rr * 0.8, Math.sin(a) * rr * 0.4 + 20 * s, 5, a, a + Math.PI); ctx.stroke(); }
@@ -2702,6 +2702,7 @@ function drawStatus(u, s, fy) {
   ctx.restore();
 }
 function drawLabel(u) {
+  if (!S.visibleTo(S.hero(world), u)) return;
   const s = u.r / 18, fy = u.y + u.r * 0.35;
   const size = Math.max(12, Math.min(19, 11 + u.r * 0.11)) / Math.max(0.75, cam.z);
   const y = fy - 62 * s - (world.ranking[0] === u && !world.room.practice ? 18 * s : 0) - size * 0.6;
@@ -2995,7 +2996,7 @@ function drawScreenOverlay() {
   // 画面外の相手：画面の縁に方向を示す矢じり。近いほど濃く、上位3人は大きい
   const top3 = world.ranking.slice(0, 3);
   for (const u of world.units) {
-    if (!u.alive || u === me) continue;
+    if (!u.alive || u === me || !S.visibleTo(me, u)) continue;
     const dx = u.x - cam.x, dy = u.y - cam.y, d = hyp(dx, dy);
     if (d > 1500) continue;
     const sx = vw / 2 + dx * cam.z, sy = vh / 2 + dy * cam.z;
@@ -3082,10 +3083,10 @@ function updateHud(dt) {
     barKey = key;
     $('spellBar').innerHTML = infos.map((f, i) => {
       const r = me.spells[i];
-      const glyphs = [D.behaviors[r.behavior].glyph, D.triggers[r.trigger].glyph, D.deploys[r.deploy].glyph, r.link === 'hold' ? D.links.hold.glyph : ''].join('');
+      const glyphs = r.stages.map((st, j) => D.craft.vessels[st.vessel].glyph + (j < r.stages.length - 1 ? D.craft.thens[st.then].glyph : '')).join('') + (r.link ? '∿' : '');
       return `<button type="button" class="slot${heroSlot === i ? ' on' : ''}${me.mp < f.cost ? ' dry' : ''}${f.misfire ? ' risky' : ''}" data-i="${i}" style="--c:${f.color}" title="${escapeHtml(f.result.desc)}">`
         + `<i class="key">${i + 1}</i><b class="nm">${escapeHtml(f.name)}</b>`
-        + `<span class="meta"><span>${glyphs}</span><span>${L('魔力 {0}', f.cost)}</span><span class="${f.misfire ? 'warn' : ''}">${L('部品 {0}/{1}', f.parts, f.cap)}${f.misfire ? L('・暴発 {0}%', Math.round(f.misfire * 100)) : ''}</span></span>`
+        + `<span class="meta"><span>${glyphs}</span><span>${L('魔力 {0}', f.cost)}</span><span class="${f.misfire ? 'warn' : ''}">${L('容量 {0}/{1}', f.parts, f.cap)}${f.misfire ? L('・暴発 {0}%', Math.round(f.misfire * 100)) : ''}</span></span>`
         + `<span class="chant"></span></button>`;
     }).join('');
   }
@@ -3093,10 +3094,10 @@ function updateHud(dt) {
   [...$('spellBar').children].forEach((b, i) => b.style.setProperty('--p', me.casting && me.casting.slot === i ? chant.toFixed(3) : 0));
   // 糸
   const linked = S.linkedOf(world, me);
-  const cmd = linked.filter(o => o.r && o.r.trigger === 'command').length;
+  const cmd = linked.filter(S.waitsSignal).length;
   $('threadInfo').hidden = !linked.length;
   $('touchDetonate').hidden = !cmd; $('touchRecall').hidden = !linked.length;
-  if (linked.length) $('threadInfo').innerHTML = `<b>${L('糸 {0}', linked.length)}</b>${cmd ? `<span>${L('F 指示起爆（{0}）', cmd)}</span>` : ''}<span>${L('G 回収')}</span>`;
+  if (linked.length) $('threadInfo').innerHTML = `<b>${L('糸 {0}', linked.length)}</b>${cmd ? `<span>${L('F 合図（{0}）', cmd)}</span>` : ''}<span>${L('G 回収')}</span>`;
   // 回避
   $('dodgeBtn').style.setProperty('--cd', me.dodgeCd > 0 ? (me.dodgeCd / W.dodge.cd).toFixed(3) : 0);
   $('dodgeBtn').classList.toggle('ready', me.dodgeCd <= 0 && me.mp >= W.dodge.cost);
@@ -3139,7 +3140,7 @@ function drawMini(me) {
   const shown = new Set(world.ranking.slice(0, 3));
   for (const u of world.units) if (u.alive && u.markT > 0) shown.add(u);
   [...shown].forEach((u, i) => {
-    if (u === me) return;
+    if (u === me || !S.visibleTo(me, u)) return;
     mctx.fillStyle = hex(u.ink);
     mctx.beginPath(); mctx.arc(c + u.x * k, c + u.y * k, Math.max(2.5, 5 - i), 0, TAU); mctx.fill();
   });
@@ -3197,7 +3198,10 @@ function buildLobby() {
   $('howClose').addEventListener('click', () => { $('how').hidden = true; });
   $('howRules').innerHTML = D.rules.map(r => `<li>${r}</li>`).join('');
   $('howKeys').innerHTML = D.howto.map(([a, b]) => `<tr><th>${a}</th><td>${b}</td></tr>`).join('');
-  $('howPrinciples').innerHTML = D.principleOrder.map(k => { const p = D.principles[k], one = D.pairData[`${k}|none`]; return `<li style="--c:${hex(p.ink)}"><b>${p.kanji}</b><span>${p.name}${L('・')}${one.base}</span><em>${one.desc}</em></li>`; }).join('');
+  $('howPrinciples').innerHTML = D.principleOrder.map(k => { const p = D.principles[k], h = D.learning.parts.principle[k]; return `<li style="--c:${hex(p.ink)}"><b>${p.kanji}</b><span>${p.name}</span><em>${h[0]}<br>${h[1]}<br>${h[2]}</em></li>`; }).join('');
+  $('howWorld').innerHTML = D.learning.world.map(([title, text]) => `<article><h4>${title}</h4><p>${text}</p></article>`).join('');
+  $('howExample').textContent = D.learning.example;
+  $('howTutor').addEventListener('click', () => { $('how').hidden = true; startTutor(); });
   // 術と叫び
   $('loadout').addEventListener('click', e => { const b = e.target.closest('[data-i]'); openForge(b ? Number(b.dataset.i) : 0); });
   $('openForge').addEventListener('click', () => openForge(0));
@@ -3215,7 +3219,7 @@ function buildLobby() {
   $('voiceBtn').addEventListener('click', toggleVoice);
   $('tutorStart').addEventListener('click', startTutor);
   $('tutorLink').addEventListener('click', startTutor);
-  $('tutorSkip').addEventListener('click', () => endTutor(true));
+  $('tutorSkip').addEventListener('click', () => endTutor(tutor.i === TUTOR.length - 1));
   $('tutorGo').addEventListener('click', () => { endTutor(true); leave(); join(); });
   buildSettings();
   buildForge();
@@ -3233,6 +3237,8 @@ function syncSoundButtons() {
 }
 // 設定：声（なし／技名だけ／技名と叫び）・声の種類・音量・光のにじみ
 function buildSettings() {
+  $('setSfxOn').addEventListener('change', () => { if ($('setSfxOn').checked !== profile.sfx) toggleSfx(); syncSettings(); });
+  $('setBgmOn').addEventListener('change', () => { if ($('setBgmOn').checked !== profile.bgm) toggleBgm(); syncSettings(); });
   $('settingsBtn').addEventListener('click', openSettings);
   $('setBtn').addEventListener('click', openSettings);
   $('setClose').addEventListener('click', closeSettings);
@@ -3258,6 +3264,8 @@ function buildSettings() {
 function openSettings() { unlockAudio(); syncSettings(); $('settings').hidden = false; $('setClose').focus(); }
 function closeSettings() { $('settings').hidden = true; }
 function syncSettings() {
+  $('setSfxOn').checked = !!profile.sfx;
+  $('setBgmOn').checked = !!profile.bgm;
   for (const b of $('setVoiceMode').children) b.setAttribute('aria-checked', b.dataset.k === profile.voiceMode);
   const list = jaVoices(), cur = voice.jp || pickVoice();
   const label = v => v.name.replace(/^(Microsoft|Google)\s+/, '').replace(/\s*-\s*Japanese.*$/i, '').replace(/\s*\(Japan\)/i, '');
@@ -3317,114 +3325,219 @@ function syncCareer() {
 function syncLoadout() {
   $('loadout').innerHTML = profile.spells.map((r, i) => {
     const f = S.spellInfo(null, r);
-    return `<li><button type="button" data-i="${i}" style="--c:${f.color}"><i>${i + 1}</i><b>${escapeHtml(f.name)}</b><span>${L('部品 {0}・魔力 {1}', f.parts, f.cost)}</span></button></li>`;
+    return `<li><button type="button" data-i="${i}" style="--c:${f.color}"><i>${i + 1}</i><b>${escapeHtml(f.name)}</b><span>${L('容量 {0}・魔力 {1}', f.parts, f.cost)}</span></button></li>`;
   }).join('');
 }
 
 // ─── 術式台 ───
-const forge = { slot: 0, draft: null, msg: '', open: false };
-const FORGE_ROWS = [
-  { id: 'fA', key: 'a', options: () => D.principleOrder.map(k => ({ v: k, big: D.principles[k].kanji, sub: D.principles[k].name, title: L('原理負荷 {0}', D.principles[k].cost) })) },
-  { id: 'fB', key: 'b', options: () => [{ v: 'none', big: '－', sub: L('なし'), title: L('単一原理（純放出）。最も軽く速い') }].concat(D.principleOrder.map(k => ({ v: k, big: D.principles[k].kanji, sub: D.principles[k].name, title: L('原理負荷 {0}', D.principles[k].cost) }))) },
-  { id: 'fForm', key: 'form', options: () => D.formOrder.map(k => ({ v: k, big: D.forms[k].suffix, sub: D.forms[k].name, title: L('負荷 {0}・半径 {1}', D.forms[k].cost, D.forms[k].radius) })) },
-  { id: 'fBeh', key: 'behavior', options: () => D.behaviorOrder.map(k => ({ v: k, big: D.behaviors[k].glyph, sub: D.behaviors[k].name, title: D.behaviors[k].note })) },
-  { id: 'fTrig', key: 'trigger', options: () => D.triggerOrder.map(k => ({ v: k, big: D.triggers[k].glyph, sub: D.triggers[k].name, title: D.triggers[k].note })) },
-  { id: 'fDep', key: 'deploy', options: () => D.deployOrder.map(k => ({ v: k, big: D.deploys[k].glyph, sub: D.deploys[k].name, title: D.deploys[k].note })) },
-  { id: 'fLink', key: 'link', options: () => ['cut', 'hold'].map(k => ({ v: k, big: D.links[k].glyph, sub: D.links[k].name, title: D.links[k].note })) },
-  { id: 'fMatter', key: 'matter', options: () => D.matterOrder.map(k => ({ v: k, big: D.matters[k].kanji, sub: D.matters[k].name, title: D.matters[k].note })) },
-  { id: 'fShape', key: 'visualShape', options: () => [{ v: 'auto', big: '', sub: L('自動'), title: L('広がり方から決める（弾は針、細い波は結晶、ほかは球）') }].concat(D.shapeOrder.map(k => ({ v: k, big: '', sub: D.shapes[k].name, title: L('{0}（速さ×{1}・当たり×{2}・威力×{3}・結界へ×{4}{5}）', D.shapes[k].note, D.shapes[k].speed, D.shapes[k].size, D.shapes[k].dmg, D.shapes[k].ward, D.shapes[k].cost ? L('・形作る負荷 {0}', D.shapes[k].cost) : '') }))) }
+// 術 ＝ 1〜3段。段ごとに器・軌道・原理の点・力の向き・次の段へ移る条件・質・大きさ・持続・見た目を選ぶ。
+// 原理は器そのものと、器に触れたものへ同じ規則で効く。選べない組み合わせは押せず、理由を読める
+const forge = { slot: 0, stage: 0, draft: null, msg: '', open: false, advanced: false, help: null, changes: '' };
+const CR = D.craft;
+const STAGE_ROWS = [
+  { id: 'fVessel', key: 'vessel', options: () => CR.vesselOrder.map(k => ({ v: k, big: CR.vessels[k].glyph, sub: CR.vessels[k].name, title: CR.vessels[k].note })) },
+  { id: 'fPath', key: 'path', options: () => CR.pathOrder.map(k => ({ v: k, big: '', sub: CR.paths[k].name, title: CR.paths[k].note })) },
+  { id: 'fForce', key: 'force', options: () => CR.forceOrder.map(k => ({ v: k, big: '', sub: CR.forces[k].name, title: CR.forces[k].name })) },
+  { id: 'fThen', key: 'then', options: () => CR.thenOrder.map(k => ({ v: k, big: CR.thens[k].glyph, sub: CR.thens[k].name, title: CR.thens[k].note })) },
+  { id: 'fMatter', key: 'matter', options: () => CR.matterOrder.map(k => ({ v: k, big: CR.matters[k].kanji, sub: CR.matters[k].name, title: CR.matters[k].note })) },
+  { id: 'fShape', key: 'look', options: () => [{ v: 'auto', big: '', sub: L('自動'), title: L('器と原理から形を決める') }].concat(D.shapeOrder.map(k => ({ v: k, big: '', sub: D.shapes[k].name, title: L('見た目だけ。性能は原理で決まる') }))) }
 ];
+const cur = () => forge.draft[forge.slot];
+const curStage = () => cur().stages[Math.min(forge.stage, cur().stages.length - 1)];
 function buildForge() {
-  for (const row of FORGE_ROWS) {
+  for (const row of STAGE_ROWS) {
     $(row.id).addEventListener('click', e => {
       const b = e.target.closest('button');
-      if (!b || b.disabled) return;
-      setDraft({ [row.key]: b.dataset.v });
+      if (!b || b.disabled || b.getAttribute('aria-disabled') === 'true') return;
+      forge.help = { key: row.key, v: b.dataset.v };
+      setStage({ [row.key]: b.dataset.v });
     });
   }
-  $('fEx').innerHTML = D.principleOrder.map(k => `<button type="button" class="chip tight" data-v="${k}" data-help="${D.extraEffects[k].note}" title="${D.extraEffects[k].note}"><b>+${D.principles[k].kanji}</b></button>`).join('');
-  $('fEx').addEventListener('click', e => { const b = e.target.closest('button'); const r = cur(); if (b && !b.disabled && r.extras.length < D.RULES.maxExtras) setDraft({ extras: r.extras.concat(b.dataset.v) }); });
-  $('fExList').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { const ex = cur().extras.slice(); ex.splice(Number(b.dataset.i), 1); setDraft({ extras: ex }); } });
-  $('fPower').addEventListener('input', () => setDraft({ power: Number($('fPower').value) }, true));
-  $('fDur').addEventListener('input', () => setDraft({ duration: Number($('fDur').value) }, true));
-  $('fRate').addEventListener('input', () => setDraft({ rate: Number($('fRate').value) }, true));
-  $('fVelocity').addEventListener('input', () => setDraft({ velocity: Number($('fVelocity').value) }, true));
+  // 原理の点：押した数にする。同じ数をもう一度押すと一つ減らす
+  $('fPoints').addEventListener('click', e => {
+    const b = e.target.closest('button[data-k]');
+    if (!b) return;
+    const k = b.dataset.k, v = Number(b.dataset.v), now = curStage().p[k];
+    forge.help = { key: 'p', v: k };
+    setStage({ p: { ...curStage().p, [k]: now === v ? v - 1 : v } });
+  });
+  $('fStages').addEventListener('click', e => { const b = e.target.closest('button[data-si]'); if (b) { forge.stage = Number(b.dataset.si); forge.help = null; renderForge(); } });
+  $('fAddStage').addEventListener('click', () => {
+    const r = cur();
+    if (r.stages.length >= CR.maxStages) return;
+    forge.stage = r.stages.length;
+    forge.help = { key: 'then', v: r.stages[r.stages.length - 1].then };
+    setDraft({ stages: r.stages.concat([{ vessel: 'field', p: { divide: 1 }, time: .5 }]) });
+  });
+  $('fDelStage').addEventListener('click', () => {
+    const r = cur();
+    if (r.stages.length <= 1) return;
+    const stages = r.stages.filter((_, i) => i !== forge.stage);
+    forge.stage = Math.max(0, forge.stage - 1);
+    setDraft({ stages });
+  });
+  $('fLink').addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b || b.getAttribute('aria-disabled') === 'true') return;
+    forge.help = { key: 'link', v: b.dataset.v };
+    setDraft({ link: b.dataset.v === 'hold' });
+  });
+  $('fSize').addEventListener('input', () => setStage({ size: Number($('fSize').value) }, true));
+  $('fTime').addEventListener('input', () => setStage({ time: Number($('fTime').value) }, true));
+  $('fNew').addEventListener('click', () => {
+    forge.draft[forge.slot] = S.normRecipe({ v: 3, stages: [{ vessel: 'bolt', p: {} }] });
+    forge.stage = 0; forge.help = { key: 'vessel', v: 'bolt' }; forge.changes = '';
+    forge.msg = L('白紙の弾から組む。器を選び、原理に点を振ろう');
+    renderForge();
+  });
+  // 詳細を閉じても、質・大きさ・持続・糸の設定は消さない
+  $('forgeAdvanced').addEventListener('click', () => { forge.advanced = !forge.advanced; renderForge(); });
   $('fName').addEventListener('input', () => setDraft({ customName: $('fName').value }, true));
-  $('forgeSlots').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { forge.slot = Number(b.dataset.i); forge.msg = ''; renderForge(); } });
-  $('fPresets').innerHTML = D.presetOrder.map(k => `<button type="button" class="chip preset" data-k="${k}" title="${escapeHtml(S.spellName(S.normRecipe(D.presets[k].r)))}">${D.presets[k].label}</button>`).join('');
-  $('fPresets').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { forge.draft[forge.slot] = S.normRecipe(D.presets[b.dataset.k].r); forge.msg = L('作例「{0}」を {1} に読み込んだ', D.presets[b.dataset.k].label, forge.slot + 1); renderForge(); } });
+  $('forgeSlots').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { forge.slot = Number(b.dataset.i); forge.stage = 0; forge.msg = ''; forge.help = null; renderForge(); } });
+  const starters = D.presetStarters;
+  for (const [id, list] of [['fPresets', starters], ['fMorePresets', D.presetOrder.filter(k => !starters.includes(k))]]) {
+    $(id).innerHTML = list.map(k => `<button type="button" class="chip preset" data-k="${k}" title="${escapeHtml(S.spellName(S.normRecipe(D.presets[k].r)))}">${D.presets[k].label}</button>`).join('');
+    $(id).addEventListener('click', e => { const b = e.target.closest('button'); if (b) loadPreset(b.dataset.k); });
+  }
   // 達人の流派：Bot が修める4つの術を丸ごと読み込む／一つずつ今の枠へ読み込む
   $('fSchools').innerHTML = D.schools.map((sc, i) => `<button type="button" class="chip preset school" data-i="${i}" title="${escapeHtml(sc.spells.map(r => r.customName).join(L('・')))}">${sc.name}</button>`).join('');
   $('fSchools').addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
     const sc = D.schools[Number(b.dataset.i)];
     forge.draft = sc.spells.map(r => S.normRecipe(r));
+    forge.stage = 0;
     forge.msg = L('流派「{0}」の4つの術を読み込んだ（{1}）', sc.name, sc.spells.map(r => r.customName).join(L('・')));
     renderForge();
   });
-  $('fMasters').innerHTML = D.schools.map((sc, i) => sc.spells.map((r, j) => `<button type="button" class="chip preset" data-i="${i}" data-j="${j}" title="${escapeHtml(sc.name + '：' + S.spellName(S.normRecipe(r)) + '／' + S.recipeResult(S.normRecipe(r)).name)}">${escapeHtml(r.customName)}</button>`).join('')).join('');
+  $('fMasters').innerHTML = D.schools.map((sc, i) => sc.spells.map((r, j) => `<button type="button" class="chip preset" data-i="${i}" data-j="${j}" title="${escapeHtml(sc.name + '：' + S.recipeResult(S.normRecipe(r)).name)}">${escapeHtml(r.customName)}</button>`).join('')).join('');
   $('fMasters').addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
     const sc = D.schools[Number(b.dataset.i)], r = sc.spells[Number(b.dataset.j)];
     forge.draft[forge.slot] = S.normRecipe(r);
+    forge.stage = 0;
     forge.msg = L('{0}の「{1}」を {2} に読み込んだ', sc.name, r.customName, forge.slot + 1);
     renderForge();
   });
-  $('fReset').addEventListener('click', () => { forge.draft = D.defaultSpells.map(r => S.normRecipe(r)); forge.msg = L('初期の4つに戻した'); renderForge(); });
+  $('fReset').addEventListener('click', () => { forge.draft = D.defaultSpells.map(r => S.normRecipe(r)); forge.stage = 0; forge.msg = L('初期の4つに戻した'); renderForge(); });
   $('forgeClose').addEventListener('click', closeForge);
   // 部品にふれると、その意味を下に出す
-  $('forge').addEventListener('mouseover', e => { const b = e.target.closest('[data-help]'); if (b) $('fHelp').textContent = b.dataset.help; });
-  $('forge').addEventListener('focusin', e => { const b = e.target.closest('[data-help]'); if (b) $('fHelp').textContent = b.dataset.help; });
+  const help = e => {
+    const b = e.target.closest('[data-help]'); if (!b) return;
+    $('fHelp').textContent = b.dataset.help;
+    // 原理の点は data-k が原理、data-v が点の数
+    if (b.dataset.key) { forge.help = { key: b.dataset.key, v: b.dataset.key === 'p' ? b.dataset.k : b.dataset.v }; renderPartHelp(); }
+  };
+  $('forge').addEventListener('mouseover', help);
+  $('forge').addEventListener('focusin', help);
   $('fTry').addEventListener('click', () => { const slot = forge.slot; closeForge(); if (!(mode === 'play' && world.room.practice)) join('dojo'); selectSlot(slot); });
 }
-const cur = () => forge.draft[forge.slot];
-// 組んだ術が何をするかを、ふつうの文章にする
-const PHRASE = {
-  behavior: { project: L('まっすぐ飛ばす'), homing: L('放ち、違う紋の大きな魔力へ曲がらせる'), lob: L('放物線で狙った地点へ落とす'), sow: L('足元近くへ転がして止める'), drop: L('自分の足元に置く'), orbit: L('自分の周りに纏う'), relay: L('三方へ撃ち分ける'), beam: L('一直線の光にして貫く') },
-  trigger: { contact: L('触れた瞬間に'), fuse: L('殻が割れる時（時限）に'), proximity: L('違う紋が近づいた時に'), command: L('F の合図で') },
-  deploy: { single: L('一度作用する'), burst: L('大きく炸裂する'), scatter: L('追尾する小片に分かれる'), linger: L('その場に領域として残る'), sprinkle: L('攻撃せずに魔力の粒と囮を撒く'), siphon: L('領域の中の敵から魔力と魔素を奪い続ける') }
-};
-function describe(r) {
-  const res = S.recipeResult(r);
-  if (r.behavior === 'orbit' && r.b === 'none' && ['motion', 'bind', 'grow'].includes(r.a)) return L('強化術：自分の紋の魔力を体へ書き込み、{0}。', { motion: L('動きを速くする（加速）'), bind: L('受ける威力を減らす（硬化）'), grow: L('体力を少しずつ戻す（活性）') }[r.a]);
-  const shape = D.shapes[S.visualShapeOf(r)];
-  const perfectNote = L('完全：固体とエネルギーを重ね、どちらの質も光線も通さない。引き換えに、張っている間は魔力が戻らず毎秒減り、足が重く、術を唱えると解ける。');
-  if (r.behavior === 'orbit' && (r.matter === 'solid' || (r.matter === 'perfect' && !['bulwark', 'shift', 'counter'].includes(res.type)))) {
-    const n = Math.max(1, Math.round(D.RULES.orbiter.count[r.form] * (shape ? shape.orbit.count : 1)));
-    const what = S.visualShapeOf(r) === 'castle'
-      ? L('{0}枚の城壁で自分をぐるりと囲む（ほとんど回らない）。弾を受け止める壁になる', n)
-      : L('{0}本の{1}を自分の周りに回らせる。弾を受け止め、触れた相手を斬る', n, shape ? shape.name : L('刃'));
-    return L('「{0}」を固体にして、{1}。', res.base, what) + (r.matter === 'perfect' ? perfectNote : L('エネルギーの弾は貫いてくる。エネルギーの結界は剥がせる。')) + (r.link === 'hold' ? L('糸でつながり、回収（G）できる。') : '');
-  }
-  if (r.matter === 'perfect') return L('「{0}」を{1}。', res.base, PHRASE.behavior[r.behavior]) + perfectNote;
-  let t = L('{0}の「{1}」を{2}{3}。', D.forms[r.form].name, res.base, r.matter === 'solid' ? L('固体（結晶）にして') : L('エネルギーのまま'), PHRASE.behavior[r.behavior]);
-  if (r.behavior === 'orbit') t += L('周りに入った違う紋に{0}。', r.deploy === 'single' ? L('作用し続ける') : PHRASE.deploy[r.deploy]);
-  else if (r.behavior !== 'beam') t += L('{0}{1}。', PHRASE.trigger[r.trigger], PHRASE.deploy[r.deploy]);
-  t += r.matter === 'solid' ? L('固体の結界には止められるが、エネルギーの結界は剥がせる。') : L('設置壁は光線も止める。壊した一撃も、その壁で止まる。');
-  if (['wall', 'solid', 'trench'].includes(res.type) && ['line', 'plane', 'ring'].includes(r.form)) t += r.form === 'ring' ? L('六枚の面の壁で囲む城壁になる。') : L('一枚の面の壁になる。');
-  if (['project', 'homing', 'relay'].includes(r.behavior) && shape && S.visualShapeOf(r) !== 'needle') t += L('形：{0}。', shape.note);
-  if (r.link === 'hold') t += L('放った後も糸でつながり、誘導・指示起爆（F）・回収（G）ができる（維持費がかかる）。');
-  if (r.extras.length) t += L('追加性質：{0}。', r.extras.map(k => D.extraEffects[k].note).join(L('／')));
-  return t;
+function loadPreset(key) {
+  forge.draft[forge.slot] = S.normRecipe(D.presets[key].r);
+  forge.stage = 0; forge.help = null; forge.changes = '';
+  forge.msg = L('作例「{0}」を {1} に読み込んだ', D.presets[key].label, forge.slot + 1);
+  renderForge();
 }
-// 選べない部品の理由（組み合わせの決まり）
-function blockReason(r, key, v) {
-  if (r.behavior === 'beam' && ['form', 'trigger', 'deploy', 'link'].includes(key)) return L('貫通光線は「細い波・接触・単発・糸：切断」で固定');
-  if (r.behavior === 'beam' && key === 'matter') return L('貫通光線は光そのもの。質は「エネルギー」だけ');
-  if (key === 'matter' && v === 'perfect') return L('完全は結界を作る術（固化・物性編壁・掘削塹壕・根絡・位相牢・重縛結界・位相転換・反力変換）と周回にだけ使える');
-  if (r.behavior === 'orbit' && key === 'trigger') return L('周回は常に起動しているので「接触」だけ');
-  if (r.behavior === 'orbit' && key === 'deploy') return L('周回の追加機能は「単発・残留・吸魔」だけ');
-  if (r.trigger === 'command' && key === 'link' && v === 'cut') return L('指示起爆は糸を通して合図を送るので「維持」が必要');
+// 原理が器そのものに何をするか（この器では効かなければ空）
+function selfLine(st, k) {
+  const tx = CR.selfText[st.vessel][k];
+  if (!tx) return '';
+  const count = st.vessel === 'orbit' ? CR.orbitCopies[st.p.grow] : CR.copies[st.p.grow];
+  return tx.split('{n}').join(st.p[k]).split('{c}').join(count);
+}
+// 原理が触れたものに何をするか
+function touchLine(st, k) {
+  const n = st.p[k];
+  switch (k) {
+    case 'motion': return CR.forces[st.force].name;
+    case 'bind': return ['bolt', 'ray', 'body', 'orbit'].includes(st.vessel) ? (n >= 3 ? L('術者へつなぎ、足を止める') : L('術者へつなぐ')) : (n >= 3 ? L('中心へつなぎ、足を止める') : L('中心へつなぐ'));
+    case 'divide': return n >= 2 ? L('壊し、糸を断つ') : L('壊す');
+    case 'convert': return L('魔力を奪う');
+    case 'grow': return L('自分の体と壁を直す（相手には効かない）');
+    case 'phase': return L('印を付ける（隠れられず、打撃が重くなる）');
+  }
   return '';
 }
+// 1回触れたときの打撃の目安
+const STAGE_MUL = { bolt: 1, ray: CR.ray.mul, wall: CR.wall.touch, field: CR.field.burst, body: CR.body.bump, orbit: CR.orbit.touch };
+const stageHit = st => S.touchPower(st) * STAGE_MUL[st.vessel] / (['bolt', 'ray'].includes(st.vessel) ? Math.sqrt(CR.copies[st.p.grow]) : st.vessel === 'orbit' ? Math.sqrt(CR.orbitCopies[st.p.grow] / 2) : 1);
+// 段を文章にする
+function stageText(r, i) {
+  const st = r.stages[i], ks = S.topKeys(st.p);
+  const opts = [];
+  if (st.vessel === 'bolt') opts.push(CR.paths[st.path].name);
+  if (st.vessel !== 'ray' && st.vessel !== 'body') opts.push(CR.matters[st.matter].name);
+  let t = L('{0}段目：{1}', i + 1, CR.vessels[st.vessel].name) + (opts.length ? L('（{0}）', opts.join(L('・'))) : '') + L('。');
+  const kan = k => `${D.principles[k].kanji}${st.p[k]}`;
+  if (!ks.length) t += L('原理なし。素の魔力だけ。');
+  else {
+    const self = ks.map(k => { const s = selfLine(st, k); return s ? `${kan(k)} ${s}` : ''; }).filter(Boolean);
+    if (self.length) t += L('器そのもの：{0}。', self.join(L('／')));
+    t += L('触れたもの：{0}。', ks.map(k => `${kan(k)} ${touchLine(st, k)}`).join(L('／')));
+  }
+  t += L('一撃の打撃 約{0}。', Math.round(stageHit(st)));
+  if (i < r.stages.length - 1) t += L('{0}、{1}段目を開く。', CR.thens[st.then].name, i + 2);
+  return t;
+}
+function describe(r) {
+  let t = r.stages.map((_, i) => stageText(r, i)).join(' ');
+  if (r.link) t += L('糸でつながる（誘導・合図 F・回収 G ができるが、維持費がかかる）。');
+  return t;
+}
+// 説明は、マウス・キーボード・タッチで選んだものについて常に読める
+function renderPartHelp() {
+  const st = curStage(), h = forge.help || { key: 'vessel', v: st.vessel };
+  const LP = D.learning.parts;
+  let title = '', what = '', use = '', weak = '';
+  if (h.key === 'p') {
+    const k = h.v, p = D.principles[k], guide = LP.principle[k];
+    title = `${p.kanji} ${p.name}`;
+    [what, use, weak] = guide;
+  } else if (h.key === 'vessel') { title = CR.vessels[h.v].name; [what, use, weak] = LP.vessel[h.v]; }
+  else if (h.key === 'then') { title = CR.thens[h.v].name; [what, use, weak] = LP.then[h.v]; }
+  else if (h.key === 'path') { title = CR.paths[h.v].name; what = CR.paths[h.v].note; use = L('弾だけが選べる。'); weak = L('追尾は制御容量を1使う。'); }
+  else if (h.key === 'matter') { title = CR.matters[h.v].name; what = CR.matters[h.v].note; use = L('固体はエネルギーの構造を、光線はエネルギーの結界を大きく削る。'); weak = L('固体は遅く、エネルギーは固体の構造に弱い。'); }
+  else if (h.key === 'force') { title = CR.forces[h.v].name; what = L('動の点で触れたものを動かす向き。弾・線・纏・環の中心は術者、壁は触れた面、円は中心。'); use = L('引けば相手を寄せ、押せば遠ざけ、回せば横へ流す。'); weak = L('動の点がなければ働かない。'); }
+  else if (h.key === 'link') { title = L('糸'); [what, use] = [L('放った後も術者とつながる。'), L('追尾の弾を照準へ誘導し、F の合図で次の段を開き、G でほどいて魔力を戻す。')]; weak = L('毎秒魔力を使い、遠すぎると切れる。制御容量を1使う。'); }
+  else { title = L('見た目'); what = L('弾と環の形。'); use = L('好みの姿にする。'); weak = L('性能は変わらない。'); }
+  $('fHelpTitle').textContent = title;
+  $('fHelpWhat').textContent = what; $('fHelpUse').textContent = use; $('fHelpWeak').textContent = weak;
+  $('fHelp').textContent = (h.key === 'p' && selfLine(st, h.v) ? L('この器では：{0}', selfLine({ ...st, p: { ...st.p, [h.v]: Math.max(1, st.p[h.v]) } }, h.v)) : '') || blockReason(st, h.key, h.v) || L('部品を選ぶと、この説明が切り替わる。');
+}
+// 選べない組み合わせの理由
+function blockReason(st, key, v) {
+  if (key === 'then' && !CR.thensFor[st.vessel].includes(v)) return v === 'break' ? L('壊れる器（弾・面・環・結のある円）だけが選べる。') : v === 'end' || v === 'signal' ? L('線は一瞬で終わるので「触れたら」だけ。') : '';
+  if (key === 'then' && v === 'break' && st.vessel === 'field' && !st.p.bind) return L('結の無い円は硬さを持たず、壊れない。結に点を振ろう。');
+  if (key === 'matter' && (st.vessel === 'ray' || st.vessel === 'body')) return st.vessel === 'ray' ? L('線は光そのもの。質はエネルギーだけ。') : L('纏は自分の体。質は選ばない。');
+  if (key === 'path' && st.vessel !== 'bolt') return L('軌道は弾だけが選べる。');
+  if (key === 'look' && st.vessel !== 'bolt' && st.vessel !== 'orbit') return L('見た目は弾と環だけが選べる。');
+  if (key === 'link' && v === 'cut' && cur().stages.slice(0, -1).some(s => s.then === 'signal')) return L('「合図で」移る段があるので、糸が要る。');
+  return '';
+}
+function setStage(patch, soft = false) {
+  const r = cur();
+  setDraft({ stages: r.stages.map((s, i) => i === forge.stage ? { ...s, ...patch } : s) }, soft);
+}
+// 正規化で他の項目が変わったら、画面で知らせる
 function setDraft(patch, soft = false) {
-  forge.draft[forge.slot] = S.normRecipe({ ...cur(), ...patch });
+  const before = { ...cur(), ...patch }, normalized = S.normRecipe(before);
+  const changed = [];
+  normalized.stages.forEach((s, i) => {
+    const b = before.stages[i] || {};
+    if (b.then && b.then !== s.then) changed.push(L('{0}段目の条件→{1}', i + 1, CR.thens[s.then].name));
+    if (b.matter && b.matter !== s.matter) changed.push(L('{0}段目の質→{1}', i + 1, CR.matters[s.matter].name));
+  });
+  if (!before.link && normalized.link) changed.push(L('糸→つなぐ'));
+  forge.changes = changed.length ? L('この組み合わせに合わせて変更：{0}。選べない部品にふれると理由が分かる。', changed.join(L('・'))) : '';
+  forge.draft[forge.slot] = normalized;
+  forge.stage = Math.min(forge.stage, normalized.stages.length - 1);
   forge.msg = '';
   renderForge(soft);
 }
 function openForge(slot = 0) {
-  forge.slot = slot;
-  forge.draft = profile.spells.map(r => S.normRecipe(r));
+  forge.slot = slot; forge.stage = 0;
+  const me = world && S.hero(world);
+  forge.draft = (tutor.on && me ? me.spells : profile.spells).map(r => S.normRecipe(r));
+  forge.help = null; forge.changes = '';
   forge.msg = '';
   forge.open = true;
   $('forge').hidden = false;
@@ -3434,59 +3547,80 @@ function openForge(slot = 0) {
 function closeForge() {
   if (!forge.open) return;
   forge.open = false;
-  profile.spells = forge.draft.map(r => S.normRecipe(r));
-  saveProfile();
+  // 手ほどきの実験用レシピを、保存した持ち術へ書き込まない
+  if (!tutor.on) { profile.spells = forge.draft.map(r => S.normRecipe(r)); saveProfile(); }
   $('forge').hidden = true;
-  if (tutor.on && tutor.s) tutor.s.forged = true;
+  if (tutor.on && tutor.s) tutor.s.forged = JSON.stringify(forge.draft[0]) !== tutor.s.initialRecipe;
   syncLoadout();
   const me = world && S.hero(world);
-  if (mode === 'play' && me && me.alive && world.room.practice) { me.spells = profile.spells.map(r => S.normRecipe(r)); barKey = ''; me.casting = null; me.queue = null; }
+  if (mode === 'play' && me && me.alive && world.room.practice) { me.spells = forge.draft.map(r => S.normRecipe(r)); barKey = ''; me.casting = null; }
 }
+const stageColor = st => { const ks = S.topKeys(st.p); return !ks.length ? '#d9cfbd' : hex(D.principles[ks[0]].ink); };
 function renderForge(soft = false) {
-  const r = cur();
+  const r = cur(), si = Math.min(forge.stage, r.stages.length - 1), st = r.stages[si], last = si === r.stages.length - 1;
+  $('forge').classList.toggle('prima-forge-basic', !forge.advanced);
+  $('forgeAdvanced').setAttribute('aria-expanded', forge.advanced);
+  $('forgeAdvanced').textContent = forge.advanced ? L('基本に戻る') : L('術式を拡張する');
+  $('forgeModeNote').textContent = tutor.on ? L('手ほどきの練習用。保存した4つの術は変更しない。')
+    : forge.advanced ? L('質・大きさ・持続・糸を調整する。') : L('器を選び、原理に点を振り、段をつなぐ。詳細を閉じても設定は残る。');
+  $('fChanges').textContent = forge.changes;
   $('forgeSlots').innerHTML = forge.draft.map((d, i) => {
     const f = S.spellInfo(null, d);
-    return `<button type="button" role="tab" data-i="${i}" aria-selected="${i === forge.slot}" style="--c:${f.color}"><i>${i + 1}</i><b>${escapeHtml(f.name)}</b><span>${L('部品 {0}', f.parts)}</span></button>`;
+    return `<button type="button" role="tab" data-i="${i}" aria-selected="${i === forge.slot}" style="--c:${f.color}"><i>${i + 1}</i><b>${escapeHtml(f.name)}</b><span>${L('容量 {0}', f.parts)}</span></button>`;
   }).join('');
-  for (const row of FORGE_ROWS) {
+  // 段：1段目 → 条件 → 2段目 …
+  $('fStages').innerHTML = r.stages.map((s, i) => {
+    const ks = S.topKeys(s.p).map(k => D.principles[k].kanji + s.p[k]).join('');
+    const tab = `<button type="button" role="tab" data-si="${i}" aria-selected="${i === si}" style="--c:${stageColor(s)}"><i>${L('{0}段目', i + 1)}</i><b>${CR.vessels[s.vessel].glyph} ${CR.vessels[s.vessel].name}</b><span>${ks || L('原理なし')}</span></button>`;
+    return tab + (i < r.stages.length - 1 ? `<span class="prima-then" aria-hidden="true">${CR.thens[s.then].glyph}<small>${CR.thens[s.then].name}</small></span>` : '');
+  }).join('');
+  $('fAddStage').hidden = r.stages.length >= CR.maxStages;
+  $('fDelStage').hidden = r.stages.length <= 1;
+  $('fDelStage').textContent = L('{0}段目を外す', si + 1);
+  $('fStageNote').textContent = r.stages.length >= CR.maxStages ? L('段は最大{0}つ。', CR.maxStages) : L('段を足すと、この術が条件を満たした場所から次の器が開く。');
+  // 段の項目
+  $('fPathRow').hidden = st.vessel !== 'bolt';
+  $('fForceRow').hidden = !st.p.motion;
+  $('fThenRow').hidden = last;
+  $('fShapeRow').hidden = st.vessel !== 'bolt' && st.vessel !== 'orbit';
+  for (const row of STAGE_ROWS) {
     $(row.id).innerHTML = row.options().map(o => {
-      // 選んでも組み合わせの決まりで戻されるものは押せない（例：周回は接触だけ、光線は細い波だけ）
-      const test = S.normRecipe({ ...r, [row.key]: o.v });
-      const blocked = test[row.key] !== o.v;
-      const why = blocked ? blockReason(r, row.key, o.v) : '';
-      return `<button type="button" class="chip${o.big ? '' : ' plain'}" data-v="${o.v}" aria-pressed="${r[row.key] === o.v}"${blocked ? ' disabled' : ''} data-help="${escapeHtml(why || o.title)}" title="${escapeHtml(why || o.title)}">${o.big ? `<b>${o.big}</b>` : ''}<span>${o.sub}</span></button>`;
+      const blocked = !!blockReason(st, row.key, o.v) || S.normRecipe({ ...r, stages: r.stages.map((s, i) => i === si ? { ...s, [row.key]: o.v } : s) }).stages[si][row.key] !== o.v;
+      const why = blocked ? blockReason(st, row.key, o.v) : '';
+      return `<button type="button" class="chip${o.big ? '' : ' plain'}" data-key="${row.key}" data-v="${o.v}" aria-pressed="${st[row.key] === o.v}"${blocked ? ' aria-disabled="true"' : ''} data-help="${escapeHtml(why || o.title)}" title="${escapeHtml(why || o.title)}">${o.big ? `<b>${o.big}</b>` : ''}<span>${o.sub}</span></button>`;
     }).join('');
   }
-  for (const b of $('fEx').children) b.disabled = r.extras.length >= D.RULES.maxExtras;
-  $('fExList').innerHTML = r.extras.length
-    ? r.extras.map((k, i) => `<button type="button" class="ex" data-i="${i}" style="--c:${hex(D.principles[k].ink)}" title="${L('{0}（押すと外す）', D.extraEffects[k].note)}">${D.principles[k].kanji} ×</button>`).join('')
-    : `<span class="none">${L('なし（最大{0}つ・重複可）', D.RULES.maxExtras)}</span>`;
+  // 原理の点（0〜3）。器そのものへの働きを横に出す
+  $('fPoints').innerHTML = D.principleOrder.map(k => {
+    const p = D.principles[k], n = st.p[k], self = selfLine({ ...st, p: { ...st.p, [k]: Math.max(1, n) } }, k);
+    const pips = [1, 2, 3].map(v => `<button type="button" data-k="${k}" data-v="${v}" data-key="p" aria-pressed="${n >= v}" aria-label="${escapeHtml(L('{0}を{1}点', p.name, v))}" data-help="${escapeHtml(L('{0}：器そのもの＝{1}／触れたもの＝{2}', p.name, self || L('この器では働かない'), touchLine(st, k)))}"></button>`).join('');
+    return `<div class="prima-pt${n ? ' on' : ''}" style="--c:${hex(p.ink)}"><b>${p.kanji}</b><span class="nm">${p.name}</span><span class="pips">${pips}</span><em>${escapeHtml(self || L('（器には効かない）'))}<br>${escapeHtml(L('触れたもの：{0}', touchLine(st, k)))}</em></div>`;
+  }).join('');
+  // 大きさ・持続・糸
+  $('fSize').value = st.size; $('fTime').value = st.time;
+  $('fSizeV').textContent = `${Math.round(st.size * 100)}%`; $('fTimeV').textContent = `${Math.round(st.time * 100)}%`;
+  $('fSize').disabled = st.vessel === 'body'; $('fTime').disabled = st.vessel === 'ray';
+  $('fSlideNote').textContent = { bolt: L('弾：大きさは当たりの広さ、持続は射程。'), ray: L('線：大きさは光の太さ。持続は無い。'), wall: L('面：大きさは長さと硬さ、持続は立っている時間。'), field: L('円：大きさは半径（消費は面積で増える）、持続は残る時間。'), body: L('纏：持続は宿る時間。'), orbit: L('環：大きさは回る半径、持続は回る時間。') }[st.vessel];
+  const needLink = r.stages.slice(0, -1).some(s => s.then === 'signal');
+  $('fLink').innerHTML = [['cut', L('切る'), L('放った瞬間に糸を切る。維持費なし')], ['hold', L('つなぐ'), L('誘導・合図・回収ができる。維持費がかかり、制御容量を1使う')]].map(([v, name, note]) => {
+    const blocked = v === 'cut' && needLink, why = blocked ? blockReason(st, 'link', v) : note;
+    return `<button type="button" class="chip plain" data-key="link" data-v="${v}" aria-pressed="${(v === 'hold') === r.link}"${blocked ? ' aria-disabled="true"' : ''} data-help="${escapeHtml(why)}" title="${escapeHtml(why)}"><span>${name}</span></button>`;
+  }).join('');
   if (!soft || document.activeElement !== $('fName')) $('fName').value = r.customName;
-  $('fPower').value = r.power; $('fDur').value = r.duration; $('fRate').value = r.rate;
-  $('fPowerV').textContent = `${Math.round(r.power * 100)}%`;
-  $('fDurV').textContent = `${Math.round(r.duration * 100)}%`;
-  $('fRateV').textContent = `×${r.rate}`;
-  $('fVelocity').value = r.velocity;
-  $('fVelocityV').textContent = `${Math.round(r.velocity * 100)}%`;
-  $('fVelocity').disabled = !['project', 'homing', 'lob', 'sow', 'relay'].includes(r.behavior);
-  const durOk = r.trigger === 'fuse' || ['linger', 'siphon'].includes(r.deploy) || r.behavior === 'orbit' || r.trigger === 'proximity' || r.trigger === 'command';
-  $('fDur').disabled = !durOk;
-  $('fRate').disabled = S.normRecipe({ ...r, rate: 3 }).rate === 1;
   // 結果
   const f = S.spellInfo(null, r), res = f.result;
   $('fResName').textContent = f.name;
   $('fResName').style.setProperty('--c', f.color);
-  $('fResBase').textContent = L('現象：{0}', r.customName ? res.name : res.base);
+  $('fResBase').textContent = L('器：{0}', r.stages.map((s, i) => CR.vessels[s.vessel].name + (i < r.stages.length - 1 ? ` ${CR.thens[s.then].glyph} ` : '')).join(''));
   $('fResDesc').textContent = res.desc;
   $('fSummary').textContent = describe(r);
   $('fResTags').innerHTML = res.tags.map(t => `<span>${t}</span>`).join('');
   $('fParts').textContent = `${f.parts}`;
   $('fCost').textContent = `${f.cost}`;
   $('fWind').textContent = L('{0}秒', f.windup.toFixed(2));
-  // 威力：命中1回の目安（純度と形を含む）と、遠く（800先）で残る割合
-  $('fPow').textContent = `${Math.round(f.power)}`;
-  $('fPow').title = L('純度 ×{0}（部品が少ないほど重い）', f.purity.toFixed(2));
-  $('fReach').textContent = ['project', 'homing', 'relay', 'beam'].includes(r.behavior) ? `${Math.round(f.reach * 100)}%` : '－';
+  $('fPow').textContent = `${Math.round(Math.max(...r.stages.map(stageHit)))}`;
+  $('fPow').title = L('いちばん重い段の一撃（増の複製は1発ぶん）。点を重ねるほど共鳴して重くなる');
+  $('fReach').textContent = ['bolt', 'ray'].includes(r.stages[0].vessel) ? `${Math.round(f.reach * 100)}%` : '－';
   // 制御容量：レベルごとの暴発率
   $('fCap').innerHTML = D.RULES.capacity.map(([lv, cap]) => {
     const over = f.parts - cap, m = over > 0 ? Math.min(D.RULES.misfire.max, over * D.RULES.misfire.perOverPart) : 0;
@@ -3494,94 +3628,83 @@ function renderForge(soft = false) {
   }).join('');
   $('forgeMsg').textContent = forge.msg;
   $('fTry').textContent = mode === 'play' && world.room.practice ? L('決定して試す') : L('修練場で試す');
+  renderPartHelp();
 }
-// 見本：届き方・発動・追加機能・糸の動きを小さな図で見せる（2.4秒でくり返す）
+// 見本：段ごとに器が開き、条件を満たした場所から次の段が開く様子を小さな図で見せる
 const pv = $('forgePreview'), pctx = pv.getContext('2d');
 function drawPreview(time) {
   if (!forge.open) return;
-  const r = cur(), res = S.recipeResult(r), c = res.color;
-  const Wd = pv.width, Hd = pv.height, g = pctx;
-  const T = 2.4, t = (time % T) / T;
+  const r = cur(), g = pctx, Wd = pv.width, Hd = pv.height;
+  const per = 1.2, T = per * r.stages.length + 0.6, t = time % T;
   g.setTransform(1, 0, 0, 1, 0, 0);
   g.fillStyle = '#0a0810'; g.fillRect(0, 0, Wd, Hd);
   g.strokeStyle = 'rgba(236,230,216,.05)'; g.lineWidth = 1;
   for (let x = 0; x < Wd; x += 24) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, Hd); g.stroke(); }
-  const cx = 56, cy = Hd * 0.62, tx = Wd - 64, ty = Hd * 0.42;
-  const rad = D.forms[r.form].radius * 0.3 * (r.deploy === 'burst' ? 1.5 : 1);
-  // 術者と的
+  const cx = 50, cy = Hd * 0.62, tx = Wd - 70, ty = Hd * 0.46;
   const dot = (x, y, col, rr) => { g.fillStyle = col; g.beginPath(); g.arc(x, y, rr, 0, TAU); g.fill(); };
+  const glowAt = (x, y, s, c) => { g.globalCompositeOperation = 'lighter'; g.drawImage(glow(c), x - s, y - s, s * 2, s * 2); g.globalCompositeOperation = 'source-over'; };
   g.strokeStyle = rgba(BONE, .6); g.lineWidth = 1.5; g.beginPath(); g.ellipse(cx, cy + 10, 16, 6, 0, 0, TAU); g.stroke();
-  dot(cx, cy - 6, '#1b1724', 10); g.strokeStyle = c; g.stroke();
-  const prox = r.trigger === 'proximity';
-  const tgx = prox && t > 0.45 ? tx - (t - 0.45) * 90 : tx;
-  dot(tgx, ty, 'rgba(236,230,216,.18)', 12);
-  g.strokeStyle = 'rgba(236,230,216,.4)'; g.beginPath(); g.arc(tgx, ty, 12, 0, TAU); g.stroke();
-  // 経路
-  let px = cx, py = cy, endX = tx, endY = ty, stop = 0.5;
-  const beh = r.behavior;
-  if (beh === 'drop') { endX = cx; endY = cy; stop = 0.05; }
-  if (beh === 'sow') { endX = cx + 90; endY = cy - 10; }
-  if (beh === 'lob') { endX = tx - 10; endY = ty + 6; }
-  if (beh === 'beam') stop = 0.15;
-  if (['project', 'homing', 'lob', 'sow', 'relay'].includes(beh)) stop /= r.velocity;
-  const fly = Math.min(1, t / stop);
-  const glowAt = (x, y, s) => { g.globalCompositeOperation = 'lighter'; g.drawImage(glow(c), x - s, y - s, s * 2, s * 2); g.globalCompositeOperation = 'source-over'; };
-  if (beh === 'orbit' && r.matter === 'solid') {
-    // 周回の刃：固体の刃が本数ぶん回る
-    const n = D.RULES.orbiter.count[r.form], rr = 22 + D.RULES.orbiter.radius[r.form] * 0.35;
-    g.strokeStyle = rgba(c, .25); g.beginPath(); g.arc(cx, cy - 6, rr, 0, TAU); g.stroke();
-    for (let i = 0; i < n; i++) {
-      const a = t * TAU * 1.5 + i / n * TAU;
-      g.save(); g.translate(cx + Math.cos(a) * rr, cy - 6 + Math.sin(a) * rr); g.rotate(a + Math.PI / 2);
-      drawWeapon(g, S.visualShapeOf(r), 4.5, c, r.matter, t * 30);
-      g.restore();
-    }
-  } else if (beh === 'orbit') {
-    const a = t * TAU * 2;
-    g.strokeStyle = rgba(c, .4); g.setLineDash([4, 6]); g.beginPath(); g.arc(cx, cy - 6, rad * 0.9 + 10, 0, TAU); g.stroke(); g.setLineDash([]);
-    glowAt(cx + Math.cos(a) * (rad * 0.9 + 10), cy - 6 + Math.sin(a) * (rad * 0.9 + 10), 12);
-  } else if (beh === 'beam') {
-    if (t < 0.4) { g.strokeStyle = rgba(c, 1 - t / 0.4); g.lineWidth = 4; g.beginPath(); g.moveTo(cx, cy - 6); g.lineTo(tx + 40, ty + (ty - cy + 6) * 40 / (tx - cx)); g.stroke(); }
-  } else {
-    const paths = beh === 'relay' ? [-0.22, 0, 0.22] : [0];
-    for (const off of paths) {
-      const k = fly;
-      let x = cx + (endX - cx) * k, y = cy - 6 + (endY - cy + 6) * k;
-      if (beh === 'homing') y -= Math.sin(k * Math.PI) * 40;
-      if (beh === 'lob') y -= Math.sin(k * Math.PI) * 60;
-      y += off * 140 * k;
-      if (t < stop + 0.02) {
-        glowAt(x, y, beh === 'lob' ? 12 : 9);
-        // 形と質：飛ぶ刃を小さく描く
-        if (['project', 'homing', 'relay'].includes(beh)) { g.save(); g.translate(x, y); g.rotate(Math.atan2(endY - cy, endX - cx)); drawWeapon(g, S.visualShapeOf(r), 4.5, c, r.matter, t * 30); g.restore(); }
+  dot(cx, cy - 6, '#1b1724', 10);
+  dot(tx, ty, 'rgba(236,230,216,.18)', 12);
+  g.strokeStyle = 'rgba(236,230,216,.4)'; g.beginPath(); g.arc(tx, ty, 12, 0, TAU); g.stroke();
+  let ox = cx, oy = cy - 6, dir = Math.atan2(ty - oy, tx - ox);
+  for (let i = 0; i < r.stages.length; i++) {
+    const st = r.stages[i], c = stageColor(st), k = (t - i * per) / per;
+    if (k < 0) break;
+    const f = Math.min(1, k), fade = k > 1 ? Math.max(0.15, 1 - (k - 1) * 2) : 1;
+    // 弾・線は照準へ、面は術者の正面、円は足元、後の段は前の段の続きへ
+    const aimX = i ? ox + Math.cos(dir) * 90 : tx, aimY = i ? oy + Math.sin(dir) * 90 : ty;
+    let ex = aimX, ey = aimY;
+    g.globalAlpha = fade;
+    if (st.vessel === 'bolt') {
+      const n = CR.copies[st.p.grow];
+      for (let j = 0; j < n; j++) {
+        const off = (j - (n - 1) / 2) * 0.16, a = Math.atan2(aimY - oy, aimX - ox) + off, d = hyp(aimX - ox, aimY - oy);
+        let kk = f;
+        if (st.path === 'return') kk = f < 0.5 ? f * 2 : 2 - f * 2;
+        let x = ox + Math.cos(a) * d * kk, y = oy + Math.sin(a) * d * kk;
+        if (st.path === 'arc') y -= Math.sin(f * Math.PI) * 50;
+        if (st.path === 'seek') y += Math.sin(f * Math.PI * 2) * 14;
+        if (k < 1) { glowAt(x, y, 9, c); g.save(); g.translate(x, y); g.rotate(a); drawWeapon(g, S.visualShapeOf(r, i), 4.5, c, st.matter, t * 30); g.restore(); }
       }
-      px = x; py = y;
-      if (r.link === 'hold' && t < 0.95) { g.strokeStyle = rgba(c, .45); g.setLineDash([5, 4]); g.beginPath(); g.moveTo(cx + 8, cy - 18); g.quadraticCurveTo((cx + x) / 2, (cy + y) / 2 + 20, x, y); g.stroke(); g.setLineDash([]); }
+    } else if (st.vessel === 'ray') {
+      if (f < 0.5) { g.strokeStyle = rgba(c, 1 - f * 2); g.lineWidth = 4 * st.size; g.beginPath(); g.moveTo(ox, oy); g.lineTo(aimX, aimY); g.stroke(); }
+    } else if (st.vessel === 'wall') {
+      const wd = 34 + 26 * st.p.motion, wx = i ? ox : ox + Math.cos(dir) * wd, wy = i ? oy : oy + Math.sin(dir) * wd, L2 = 40 * st.size * f + (st.p.motion ? f * 12 : 0);
+      g.strokeStyle = c; g.lineWidth = 6 + st.p.bind * 2; g.lineCap = 'round';
+      g.beginPath(); g.moveTo(wx - Math.sin(dir) * L2 + Math.cos(dir) * f * 10 * st.p.motion, wy + Math.cos(dir) * L2); g.lineTo(wx + Math.sin(dir) * L2 + Math.cos(dir) * f * 10 * st.p.motion, wy - Math.cos(dir) * L2); g.stroke();
+      ex = wx; ey = wy;
+    } else if (st.vessel === 'field') {
+      const fx = ox + Math.cos(dir) * f * 18 * st.p.motion, fy = oy + Math.sin(dir) * f * 18 * st.p.motion, rr = 30 * st.size;
+      g.strokeStyle = rgba(c, 0.9); g.lineWidth = st.p.bind ? 3 : 1.6; g.setLineDash(st.p.bind ? [] : [3, 5]);
+      g.beginPath(); g.arc(fx, fy, rr * Math.min(1, f * 3), 0, TAU); g.stroke(); g.setLineDash([]);
+      glowAt(fx, fy, rr * (1.2 - f * 0.5), c);
+      ex = fx; ey = fy;
+    } else if (st.vessel === 'body') {
+      g.strokeStyle = c; g.globalAlpha = fade * (st.p.phase ? .3 + .2 * Math.sin(t * 8) : .7);
+      g.lineWidth = 2; g.beginPath(); g.arc(cx, cy - 6, 18 + f * 6, 0, TAU); g.stroke();
+      ex = cx; ey = cy - 6;
+    } else if (st.vessel === 'orbit') {
+      const n = CR.orbitCopies[st.p.grow], rr = 26 + 8 * st.size;
+      for (let j = 0; j < n; j++) {
+        const a = t * TAU * (0.6 + st.p.motion * 0.3) + j / n * TAU;
+        g.save(); g.translate(cx + Math.cos(a) * rr, cy - 6 + Math.sin(a) * rr); g.rotate(a + Math.PI / 2);
+        drawWeapon(g, S.visualShapeOf(r, i), 4, c, st.matter, t * 30); g.restore();
+      }
+      ex = cx + Math.cos(dir) * rr; ey = cy - 6 + Math.sin(dir) * rr;
     }
-  }
-  // 起動：発動のしかたで時刻が変わる
-  const fireAt = r.trigger === 'contact' ? stop : r.trigger === 'fuse' ? stop + 0.25 : r.trigger === 'proximity' ? 0.7 : 0.8;
-  if (t >= stop && t < fireAt && beh !== 'orbit') {
-    g.fillStyle = rgba(BONE, .9); g.font = "700 14px 'Zen Kaku Gothic New', sans-serif"; g.textAlign = 'center';
-    g.fillText(D.triggers[r.trigger].glyph + (r.trigger === 'command' ? ' F' : ''), px, py - 16);
-    if (r.trigger === 'fuse') { g.strokeStyle = rgba(BONE, .8); g.lineWidth = 2; g.beginPath(); g.arc(px, py, 14, -Math.PI / 2, -Math.PI / 2 + TAU * (1 - (t - stop) / 0.25)); g.stroke(); }
-    if (prox) { g.strokeStyle = rgba(c, .4); g.setLineDash([3, 6]); g.beginPath(); g.arc(px, py, rad, 0, TAU); g.stroke(); g.setLineDash([]); }
-  }
-  if (t >= fireAt || beh === 'orbit') {
-    const k = beh === 'orbit' ? (t * 3) % 1 : Math.min(1, (t - fireAt) / 0.3), a = 1 - k;
-    const dep = r.deploy;
-    const ox = beh === 'orbit' ? cx : px, oy = beh === 'orbit' ? cy - 6 : py;
-    if (dep === 'sprinkle') { for (let i = 0; i < 6; i++) { const an = i / 6 * TAU; glowAt(ox + Math.cos(an) * 30 * k, oy + Math.sin(an) * 30 * k, 6); } }
-    else {
-      g.strokeStyle = rgba(c, Math.max(0, a)); g.lineWidth = 2.5;
-      g.beginPath(); g.arc(ox, oy, rad * (0.3 + k * 0.7), 0, TAU); g.stroke();
-      glowAt(ox, oy, rad * 0.8 * (1 - k * 0.5));
-      if (dep === 'scatter') for (let i = 0; i < 5; i++) { const an = i / 5 * TAU; glowAt(ox + Math.cos(an) * 50 * k, oy + Math.sin(an) * 50 * k, 5); }
-      if (dep === 'linger' || dep === 'siphon') { g.fillStyle = rgba(c, .12); g.beginPath(); g.arc(ox, oy, rad, 0, TAU); g.fill(); }
+    g.globalAlpha = 1;
+    // 次の段へ移る所に条件の字を出す
+    if (i < r.stages.length - 1 && k >= 0.85 && k < 1.3) {
+      g.fillStyle = rgba(BONE, .9); g.font = "700 14px 'Zen Kaku Gothic New', sans-serif"; g.textAlign = 'center';
+      g.fillText(CR.thens[st.then].glyph + (st.then === 'signal' ? ' F' : ''), ex, ey - 18);
     }
+    if (hyp(ex - ox, ey - oy) > 1) dir = Math.atan2(ey - oy, ex - ox);
+    ox = ex; oy = ey;
   }
+  if (r.link) { g.strokeStyle = rgba(stageColor(r.stages[0]), .35); g.setLineDash([5, 4]); g.beginPath(); g.moveTo(cx + 8, cy - 18); g.quadraticCurveTo((cx + ox) / 2, (cy + oy) / 2 + 20, ox, oy); g.stroke(); g.setLineDash([]); }
   g.fillStyle = rgba(BONE, .55); g.font = "700 11px 'Zen Kaku Gothic New', sans-serif"; g.textAlign = 'left';
-  g.fillText([D.matters[r.matter].name, D.behaviors[r.behavior].name, D.triggers[r.trigger].name, D.deploys[r.deploy].name, L('糸{0}', D.links[r.link].name)].join(L('・')), 10, 16);
+  g.fillText(r.stages.map((s, i) => CR.vessels[s.vessel].name + (i < r.stages.length - 1 ? CR.thens[s.then].glyph : '')).join(' ') + (r.link ? L('・糸') : ''), 10, 16);
 }
 
 // ═══ 11. 入場・散った・退出 ═════════════════════════════════════
@@ -3614,41 +3737,83 @@ function join(roomKey) {
   playBgm();
 }
 // ─── 手ほどき：修練場で実際に操作しながら1段ずつ進む ───
-const TUTOR = [
-  { title: L('歩く'), text: L('魔導士を動かしてみよう。'), keys: ['W A S D', L('矢印キー')], touch: [L('画面の左半分をなぞる')], done: s => s.moved > 260 },
-  { title: L('術を放つ'), text: L('マウスで狙い、左クリックで術を放つ。押し続けると続けて唱える。放つたびに魔力（青い帯）を使う。戦場では魔力は勝手に戻らず、光の粒（魔素）を拾うと戻る。'), keys: [L('マウスで狙う'), L('左クリック')], touch: [L('画面の右半分をタッチ')], done: s => s.casts >= 2 },
-  { title: L('人形に当てる'), text: L('近くの人形に術を当てよう。当てた威力は上の「与えた威力」に出る。'), keys: [L('左クリック')], touch: [L('人形の方をタッチ')], done: s => s.dealt >= 30 },
-  { title: L('術を持ち替える'), text: L('術は4つまで持てる。2〜4に持ち替えて放ってみよう。4の「物性編壁」は相手の術を止める壁になる。'), keys: ['1 2 3 4', L('ホイール'), L('下の枠をクリック')], touch: [L('下の枠をタッチ')], done: s => s.otherSlot },
-  { title: L('回避'), text: L('一瞬だけ素早く跳んで、飛んでくる術をかわす（魔力を少し使う）。'), keys: ['Space', L('右クリック')], touch: [L('回避ボタン')], done: s => s.dodged },
-  { title: L('術を組む'), text: L('術式台で原理と部品をつないで、自分の術を作る。名前を付けると、放つときにその技名を叫ぶ。開いて「決定」で閉じよう。'), keys: [L('T で術式台'), L('決定 / Esc')], touch: [L('上の「術式台」ボタン')], done: s => s.forged },
-  { title: L('準備はできた'), text: L('戦場では地面の魔素を拾うと育ち、相手を散らすとその魔素を奪える。育つほど制御容量が増え、重い術も暴発させずに扱える。装いも格が上がる。魔力は光の粒を拾うと戻る。散ったらすぐ入りなおせる。'), keys: [], touch: [], last: true }
-];
-const tutor = { on: false, i: 0, doneT: 0, s: null };
+// 実際に成立した術・命中・防御を条件に進める。操作しただけでは達成にならない
+const tutor = { on: false, i: 0, doneT: 0, s: null, rocks: null };
+const TUTOR = D.learning.tutorial.map(([title, text], i) => ({
+  title, text, keys: i >= 2 && i <= 5 ? [L('T で術式台'), L('決定 / Esc'), L('左クリック')] : [L('マウスで狙う'), L('左クリック')],
+  touch: i >= 2 && i <= 5 ? [L('上の「術式台」ボタン'), L('画面の右半分をタッチ')] : [L('画面の右半分をタッチ')],
+  last: i === 6,
+  done: [s => s.casts >= 2 && s.dealt > 0, s => s.blocked > 0, s => s.forged && s.connected && s.dealt > 0,
+    s => s.forged && s.orbited, s => s.forged && s.divided && s.wall && s.wall.hp <= 0, s => s.forged && s.chained && s.dealt > 0][i]
+}));
 function startTutor() {
+  endTutor(false);
   join('dojo');
-  $('toast').innerHTML = '';   // 部屋名の知らせは手ほどきの札と重なるので出さない
-  const me = S.hero(world);
+  // 課題の射線をランダムな岩でふさがない。通常の修練場へ戻るときに復元する。
+  tutor.rocks = world.rocks; world.rocks = [];
+  $('toast').innerHTML = '';
   tutor.on = true; tutor.i = 0; tutor.doneT = 0;
-  tutor.s = { x0: me.x, y0: me.y, moved: 0, casts: 0, dealt0: me.dealt || 0, dealt: 0, otherSlot: false, dodged: false, forged: false };
-  renderTutor();
+  document.body.classList.add('prima-tutorial');
+  prepareTutor(); renderTutor();
+}
+function prepareTutor() {
+  const me = S.hero(world), i = tutor.i;
+  if (!me || i === 6) return;
+  world.spells = []; world.wards = []; world.zones = []; world.decoys = [];
+  world.practiceFire = i === 1;
+  me.x = 0; me.y = 0; me.vx = me.vy = 0; me.casting = me.queue = null;
+  me.slowT = me.rootT = me.phaseT = 0; me.slowAmt = 0; me.hp = me.maxHp; me.mp = S.maxMp(me); me.spawnShield = 0;
+  me.slotCd.fill(0); me.input.cast = false; me.input.mx = me.input.my = 0;
+  const kind = i === 1 ? 'shooter' : i === 4 ? 'guard' : i === 5 ? 'walk' : 'still';
+  const target = world.units.find(u => u.dummy === kind);
+  for (const u of world.units) if (u.dummy) u.alive = u === target;
+  if (target) {
+    target.x = 340; target.y = 0; target.vx = target.vy = 0; target.home = { x: 340, y: 0 };
+    target.casting = target.queue = null; target.slotCd.fill(0); target.hp = target.maxHp; target.spawnShield = 0;
+    target.slowT = target.rootT = target.phaseT = 0; target.slowAmt = 0;
+    if (i === 1) { target.spells = [0, 1, 2, 3].map(() => S.normRecipe(D.presets.bolt.r)); target.fireT = 1.5; }
+  }
+  // 1の枠：2段目は石壁、ほかは魔弾から組み替える
+  const recipe = i === 1 ? D.presets.stoneWall.r : D.presets.bolt.r;
+  me.spells = [recipe, D.presets.bolt.r, D.presets.burst.r, D.presets.stoneWall.r].map(r => S.normRecipe(r));
+  selectSlot(0); barKey = '';
+  tutor.s = { casts: 0, dealt0: me.dealt || 0, dealt: 0, blocked0: me.blocked || 0, blocked: 0,
+    forged: false, connected: false, orbited: false, divided: false, chained: false, wall: null, initialRecipe: JSON.stringify(me.spells[0]) };
+  if (i === 4 && target) {
+    // 弱った壁を用意し、「破壊した一撃も止まる」ことを体験できるようにする
+    target.x = 170;
+    const prev = target.spells[0]; target.spells[0] = S.normRecipe(D.presets.stoneWall.r);
+    target.input.aim = target.aim = Math.PI; target.input.tx = 110; target.input.ty = 0;
+    if (S.beginCast(world, target, 0)) { target.casting.t = target.casting.total; S.release(world, target); }
+    target.spells[0] = prev; target.x = 340;
+    tutor.s.wall = world.wards.find(g => g.owner === target.id);
+    if (tutor.s.wall) { tutor.s.wall.hp = tutor.s.wall.max = 90; tutor.s.wall.life = 120; }
+    target.slotCd.fill(999);
+  }
 }
 function tutorEvent(e, meId) {
   const s = tutor.s;
-  if (!s || e.id !== meId) return;
-  if (e.type === 'cast') s.casts++;
-  if (e.type === 'chant' && e.slot > 0) s.otherSlot = true;
-  if (e.type === 'dodge') s.dodged = true;
+  if (!tutor.on || !s || e.id !== meId || e.type !== 'cast') return;
+  s.casts++;
+  // 放った術の組み立てで課題を確かめる（結を足した弾・環・分2以上の弾・2段以上）
+  const r = S.hero(world)?.spells[S.hero(world).sel];
+  if (!r) return;
+  const s0 = r.stages[0];
+  if (s0.vessel === 'bolt' && s0.p.bind > 0) s.connected = true;
+  if (s0.vessel === 'orbit') s.orbited = true;
+  if (s0.vessel === 'bolt' && s0.p.divide >= 2) s.divided = true;
+  if (r.stages.length >= 2) s.chained = true;
 }
 function tutorTick(dt) {
   if (!tutor.on) return;
-  // 修練場から出たら手ほどきは中断（終えたことにはしない）
   if (mode !== 'play' || !world.room.practice) { endTutor(false); return; }
   const me = S.hero(world), s = tutor.s, step = TUTOR[tutor.i];
   if (!me || !s) return;
-  s.moved = Math.max(s.moved, hyp(me.x - s.x0, me.y - s.y0));
+  if (forge.open) return;
   s.dealt = (me.dealt || 0) - s.dealt0;
-  if (tutor.doneT > 0) { tutor.doneT -= dt; if (tutor.doneT <= 0) { tutor.i++; renderTutor(); } return; }
-  if (!step.last && step.done(s)) {
+  s.blocked = (me.blocked || 0) - s.blocked0;
+  if (tutor.doneT > 0) { tutor.doneT -= dt; if (tutor.doneT <= 0) { tutor.i++; prepareTutor(); renderTutor(); } return; }
+  if (!forge.open && !step.last && step.done(s)) {
     tutor.doneT = 0.9;
     $('tutor').classList.add('done');
     $('tutorBar').style.width = `${(tutor.i + 1) / (TUTOR.length - 1) * 100}%`;
@@ -3657,11 +3822,9 @@ function tutorTick(dt) {
 }
 function renderTutor() {
   const st = TUTOR[tutor.i];
-  $('tutor').hidden = false;
-  $('tutor').classList.remove('done');
+  $('tutor').hidden = false; $('tutor').classList.remove('done');
   $('tutorCount').textContent = `${tutor.i + 1} / ${TUTOR.length}`;
-  $('tutorTitle').textContent = st.title;
-  $('tutorText').textContent = st.text;
+  $('tutorTitle').textContent = st.title; $('tutorText').textContent = st.text;
   $('tutorKeys').innerHTML = (touchy() ? st.touch : st.keys).map(k => `<kbd>${escapeHtml(k)}</kbd>`).join('');
   $('tutorBar').style.width = `${tutor.i / (TUTOR.length - 1) * 100}%`;
   $('tutorGo').hidden = !st.last;
@@ -3669,8 +3832,22 @@ function renderTutor() {
   if (st.last) { profile.tutorial = true; saveProfile(); }
 }
 function endTutor(done) {
-  tutor.on = false;
-  $('tutor').hidden = true;
+  const wasOn = tutor.on;
+  if (wasOn && forge.open) closeForge();
+  tutor.on = false; $('tutor').hidden = true;
+  document.body.classList.remove('prima-tutorial');
+  if (wasOn && world && world.room.practice) {
+    if (tutor.rocks) world.rocks = tutor.rocks;
+    tutor.rocks = null;
+    world.practiceFire = false; world.spells = []; world.wards = []; world.zones = []; world.decoys = [];
+    const me = S.hero(world);
+    if (me) { me.spells = profile.spells.map(r => S.normRecipe(r)); me.casting = me.queue = null; barKey = ''; }
+    for (const u of world.units) if (u.dummy) {
+      const d = D.dummies.find(d => d.kind === u.dummy);
+      u.alive = true; u.x = d.x; u.y = d.y; u.home = { x: d.x, y: d.y }; u.slotCd.fill(0);
+      u.spells = (d.spells ? d.spells.map(k => D.presets[k].r) : D.defaultSpells).map(r => S.normRecipe(r));
+    }
+  }
   if (done) { profile.tutorial = true; saveProfile(); }
   syncWelcome();
 }

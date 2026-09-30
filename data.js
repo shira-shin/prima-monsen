@@ -13,8 +13,6 @@ DATA.WORLD = {
   // 魔力（術の燃料）。詠唱を始めるときに先払いする。戦場では勝手には戻らない：
   // 光の粒（魔素）を拾うと戻り（mote.mana × 粒の大きさ）、六原理の節点の中でだけ湧き出る（node.regen 毎秒）。修練場では常に戻る
   mp: { max: 100, perLevel: 4, regen: 0, practice: 24 },
-  // 命中の基本威力：旧版の (8 + 現象の威力 × 0.085) に、魔素の大きさの補正 (1 + √魔素 × perSqrt) を掛ける
-  hit: { base: 10, perPower: 0.085, perSqrt: 0.012 },
   // 詠唱中は遅くなる。放った直後の間
   cast: { slowWhileChant: 0.72, recast: 0.12 },
   // 回避（右クリック / Space）
@@ -47,309 +45,246 @@ DATA.WORLD = {
   points: { perPeak: 0.2, perKill: 15, place: [[1, 80], [3, 40], [10, 15]] }
 };
 
-// ═══ 02. 六原理（旧版の接続盤と同じ） ═══════════════════════════
-// 術の主原理・副原理・追加性質になる。cost は旧版の原理負荷。
+
+// ═══ 02. 六原理 ═════════════════════════════════════════════════
+// 原理は一つの動詞。作用先で意味を変えず、「器そのもの」と「器に触れたもの」の二つへ同じ規則で効く。
+// cost は1点あたりの魔力の負荷（点を重ねるほど割高：点^1.35）
 DATA.principles = {
-  motion:  { kanji: '動', name: '運動', ink: 'orange', cost: 5 },
-  bind:    { kanji: '結', name: '結合', ink: 'blue',   cost: 6 },
-  divide:  { kanji: '分', name: '分解', ink: 'teal',   cost: 7 },
-  convert: { kanji: '換', name: '変換', ink: 'purple', cost: 7 },
-  grow:    { kanji: '増', name: '増殖', ink: 'green',  cost: 8 },
-  phase:   { kanji: '相', name: '位相', ink: 'pink',   cost: 9 }
+  motion:  { kanji: '動', name: '運動', ink: 'orange', cost: 2.2, self: '速くなる',       touch: '押す・引く・回す' },
+  bind:    { kanji: '結', name: '結合', ink: 'blue',   cost: 2.6, self: '硬くなる',       touch: '器の中心へつなぐ' },
+  divide:  { kanji: '分', name: '分解', ink: 'teal',   cost: 3,   self: '鋭くなる',       touch: '壊す' },
+  convert: { kanji: '換', name: '変換', ink: 'purple', cost: 2.8, self: '受けた魔力を吸う', touch: '魔力を奪う' },
+  grow:    { kanji: '増', name: '増殖', ink: 'green',  cost: 3.2, self: '数と時間が増える', touch: '自分の紋を直す' },
+  phase:   { kanji: '相', name: '位相', ink: 'pink',   cost: 3,   self: '見えず、結を抜ける', touch: '印を付ける' }
 };
 DATA.principleOrder = ['motion', 'bind', 'divide', 'convert', 'grow', 'phase'];
-// 詠唱：術を組み立てた部品から詠唱文を作り、足元の大魔法陣の文字として巡らせる（読み上げはしない）。
+// 詠唱：術の段から詠唱文を作り、足元の大魔法陣の文字として巡らせる（読み上げはしない）。
 // 声に出すのは、名前を付けた術の技名だけ
 DATA.chant = {
   a: { motion: '疾く奔れ', bind: '結び、固まれ', divide: '解けよ', convert: '移ろい、還れ', grow: '芽吹き、満ちよ', phase: '位相よ、揺らげ' },
   b: { motion: '風を裂き', bind: '縛りを重ね', divide: '理を割り', convert: '紋を書き換え', grow: '命を継ぎ', phase: '影を渡り', none: '' },
-  behavior: { project: '', homing: '逃すな', lob: '降り注げ', sow: '種となれ', drop: '此処に在れ', orbit: '我を巡れ', relay: '三方を穿て', beam: '貫け' },
-  form: { point: '', line: '', plane: '壁となれ', ring: '環となれ', field: '満ちよ' },
-  deploy: { single: '', burst: '爆ぜろ', scatter: '散れ', linger: '留まれ', sprinkle: '撒け', siphon: '奪え' },
+  vessel: { bolt: '', ray: '貫け', wall: '壁となれ', field: '満ちよ', body: '我に宿れ', orbit: '我を巡れ' },
+  then: { hit: '触れて', end: '尽きて', signal: '合図に', break: '砕けて' },
   // この秒数より長い詠唱は大魔法陣を開く
   voiceAt: 0.34
 };
-DATA.noPrinciple = { kanji: '－', name: 'なし', ink: 'yellow', cost: 0 };
 
-// ═══ 03. 術式の部品（旧版の接続盤） ═══════════════════════════
-// 1 主原理  2 副原理  3 広がり方  4 届き方  5 発動  6 追加機能  7 糸  8 追加性質  ＋ 強弱・見た目・名前
-// 術式 ＝ { a, b, form, behavior, trigger, deploy, link, extras[], power, duration, rate, matter, visualShape, customName }
-// matter（質）と visualShape（形）は部品に数えない。質を省くと、結を含む術は固体・ほかはエネルギー（周回はエネルギー）になる
-// 消費・詠唱・部品数・暴発の式は旧版と同じ（sim.js の 06）。乱戦の速さに合わせて costScale / windScale を掛ける
-DATA.forms = {
-  point: { name: '小さな弾', suffix: '針', cost: 2, radius: 38,  power: 1.35, control: .55, terrain: .25, wind: .55 },
-  line:  { name: '細い波',   suffix: '脈', cost: 4, radius: 58,  power: 1.15, control: .70, terrain: .35, wind: .75 },
-  plane: { name: '壁',       suffix: '壁', cost: 7, radius: 96,  power: .80,  control: 1.05, terrain: 1.05, wind: 1.05 },
-  ring:  { name: '周囲',     suffix: '環', cost: 8, radius: 148, power: .80,  control: 1.20, terrain: .85, wind: 1.15 },
-  field: { name: '広い場',   suffix: '域', cost: 11, radius: 226, power: .65, control: 1.10, terrain: 1.35, wind: 1.45 }
+// ═══ 03. 術式（器 × 原理 × 段の連鎖） ═══════════════════════════
+// 術 ＝ 1〜3段。段 ＝ { vessel 器, p 原理の点, then 次の段へ移る条件, path 軌道, matter 質, force 力の向き, size 大きさ, time 持続, look 見た目 }
+// レシピ ＝ { v: 3, stages: [段…], link 糸, customName }。必ず sim.js の normRecipe() を通す
+// 原理の点は0〜3の絶対量。薄める配分はない。点を重ねると共鳴して強まる（echo）。
+// 制御容量に数えるもの（partCount）＝ 原理の点の合計 ＋ 段のつなぎ（2段目から1つずつ）＋ 糸 ＋ 追尾の軌道
+DATA.craft = {
+  maxStages: 3, maxLevel: 3,
+  // 点の効き目：1点=1、2点=2.2、3点=3.6。単調な術ほど一つの作用が重い
+  echo: [0, 1, 2.2, 3.6],
+  size: [0.6, 1.6], time: [0.5, 2],
+  // 器。cost は器の負荷、range は1段目が術者から離れて立つ距離（面は正面の近さ・円は足元＝0）
+  vessels: {
+    bolt:  { name: '弾', cost: 4, range: 820, glyph: '→', note: '照準へ飛ぶ魔力の塊。触れた相手・壁・照準の地点で次の段へ移れる' },
+    ray:   { name: '線', cost: 10, range: 900, glyph: '⚡', note: '一瞬で伸びる光。並んだ相手を貫く。設置壁で止まる。重いが遠くでも衰えない' },
+    wall:  { name: '面', cost: 6, range: 110, glyph: '▮', note: '術者の正面に立つ壁（動で遠くへ）。遠くに立てるなら弾の後ろにつなぐ。誰の体も弾も光線も止める（自分のものも）' },
+    field: { name: '円', cost: 7, range: 0,   glyph: '◎', note: '足元に開く場。遠くに開くなら弾や線の後ろにつなぐ。開いた瞬間に強く、残る間は弱く作用し続ける' },
+    body:  { name: '纏', cost: 4, range: 0,   glyph: '◈', note: '自分の体を器にする。原理が自分に宿り、触れた相手にも作用する' },
+    orbit: { name: '環', cost: 6, range: 0,   glyph: '↻', note: '自分の周りを回る。飛んでくる弾を受け止め、触れた相手に作用する' }
+  },
+  vesselOrder: ['bolt', 'ray', 'wall', 'field', 'body', 'orbit'],
+  // 弾の軌道
+  paths: {
+    straight: { name: '直進', cost: 0, parts: 0, note: 'まっすぐ飛ぶ。速い' },
+    arc:      { name: '放物', cost: 1, parts: 0, note: '放物線で壁や岩を越え、照準の地点へ落ちる' },
+    seek:     { name: '追尾', cost: 3, parts: 1, note: '違う紋の大きな魔力へ曲がる。糸があれば照準へ誘導できる。制御容量を1使う' },
+    return:   { name: '回帰', cost: 2, parts: 0, note: '射程の半分で折り返し、手元へ戻る。帰りにも当たり、受け止めると魔力が戻る' }
+  },
+  pathOrder: ['straight', 'arc', 'seek', 'return'],
+  // 次の段へ移る条件。器ごとに使えるものが違う
+  thens: {
+    hit:    { name: '触れたら', glyph: '◆', note: '相手・壁・照準の地点に触れた所で次の段が開く。纏は触れた・打たれた時' },
+    end:    { name: '尽きたら', glyph: '◷', note: '持続（弾は射程）を使い切った所で次の段が開く。時間差の仕掛けになる' },
+    signal: { name: '合図で',   glyph: '✱', note: 'F の合図で次の段が開く。糸が必要（自動で付く）' },
+    break:  { name: '壊れたら', glyph: '✕', note: '器が壊された所で次の段が開く。壁・環・結のある円・弾だけ' }
+  },
+  thenOrder: ['hit', 'end', 'signal', 'break'],
+  thensFor: { bolt: ['hit', 'end', 'signal', 'break'], ray: ['hit'], wall: ['hit', 'end', 'signal', 'break'], field: ['hit', 'end', 'signal', 'break'], body: ['hit', 'end', 'signal'], orbit: ['hit', 'end', 'signal', 'break'] },
+  forces: { push: { name: '外へ押す' }, pull: { name: '中心へ引く' }, spin: { name: '横へ回す' } },
+  forceOrder: ['push', 'pull', 'spin'],
+  matters: {
+    energy: { name: 'エネルギー', kanji: '光', note: '光と熱のまま。速いが遠くで散りやすい。固体の構造には弱く、エネルギーの構造には光線が強い' },
+    solid:  { name: '固体',       kanji: '晶', note: '結晶に固める。遅いが重く押し込み、衰えにくい。エネルギーの構造を大きく削る。固体の構造は硬い' }
+  },
+  matterOrder: ['energy', 'solid'],
+  // 命中1回の打撃 = (base + divide × echo(分) + motion × echo(動)) × 器の倍率。魔素の多い体ほど少し重い
+  dmg: { base: 5, divide: 7, motion: 2.5, perSqrt: 0.012, mark: 0.1 },
+  // 器ごとの倍率。tick は残る場・壁・環・纏が触れ続けるときの割合と間隔
+  bolt: { speed: 700, motionSpeed: .18, size: 6, fall: .45 },
+  ray:  { mul: 1.5, width: 11, motionRange: .12, fall: .06, structMul: 1.6 },
+  wall: { half: 90, reachMotion: 80, hp: 38, bindHp: 1.1, life: 8, move: 55, tick: .5, touch: .35, growLen: .3 },
+  // 円は広さを持つぶん、開いた瞬間の作用（burst）は弾より軽い
+  field:{ radius: 100, life: 2.4, move: 60, tick: .5, touch: .2, burst: .7, hp: 26, growLife: .5 },
+  body: { life: 5, motion: .11, armor: .1, maxArmor: .4, regen: 2.4, cleanse: 1.5, convert: .1, bump: .6, bumpCd: .6 },
+  orbit:{ radius: 42, life: 7, spin: 2.4, hp: 16, hitCd: .45, touch: .7 },
+  // 増の器そのもの：弾・線・環の数（点ごと）。複製1つの効き目は √(基の数 / 数) 倍（合計は増えるが、1発は軽くなる）
+  copies: [1, 2, 3, 5], orbitCopies: [2, 3, 4, 6], spread: .16,
+  // 結：触れたものを器の中心へつなぐ。長さ・張力・引く力の上限・秒数。3点で足も縫い止める。
+  // つながった距離より slack/2（最低でも長さ＋slack）離れると切れる。回避でも切れる
+  tether: { length: 160, perLevel: 30, min: 50, force: 4, forcePer: 6, pull: 600, pullPer: 300, slack: 150, time: .8, timePer: .6, slow: .15, root: .5 },
+  // 動：押す力（echo ごと）。固体はさらに押し込む
+  knock: 150, solidKnock: 90,
+  // 換：奪う魔力（echo ごと）と、自分へ戻る割合。器そのものが吸う割合（受けた打撃に対して）
+  drain: 4, drainKeep: .6, absorb: .25,
+  // 増：触れた自分の紋を直す量（echo ごと、1回あたり）
+  mend: 3,
+  // 相：見える距離（点ごとに縮む）と、印の秒数・打撃の上乗せ
+  veil: { range: 520, perLevel: 150, min: 90 }, markTime: 1.5,
+  // 質の相性：攻撃の質 → 構造の質 の倍率
+  clash: { solidOnEnergy: 1.8, energyOnSolid: .65, rayOnEnergy: 2, rayOnSolid: 1 },
+  // 構造の硬さ：固体は硬く、エネルギーは柔らかい
+  hardness: { solid: 1.4, energy: .85 },
+  // 分の器そのもの：構造を削る倍率（echo ごと）。弾は点の数だけ体を貫く
+  structPer: .6,
+  // 共鳴：自分のエネルギーの場を通った弾の打撃の倍率
+  resonance: 1.2,
+  // 魔力の消費 = Σ段 (器 + Σ 原理の負荷 × 点^1.35 + 軌道) × 大きさ × 持続 × 質 × (2段目以降 later) ＋ 糸
+  later: .9, solidCost: 1.1, linkCost: 3, costScale: 1,
+  // 詠唱 = base + 消費 × perCost（上限 max）＋ 段ごとの間
+  wind: { base: .12, perCost: .0105, min: .15, max: 1.1, perStage: .05 },
+  // 自動の名前：段ごとに「原理の字＋器の字」、段どうしは stageSep でつなぐ。点の無い段は empty
+  naming: { join: '', stageSep: '・', empty: '素' },
+  // 術式台の説明：原理が器そのものに何をするか（器ごと）。{n} は点の数、{c} は増えた数。空文字は「この器には効かない」
+  selfText: {
+    bolt:  { motion: '速く飛ぶ', bind: '空中の競り合いに強い', divide: '{n}体を貫き、壁を削る', convert: '競り勝った弾を吸う', grow: '{c}発に増える（1発は軽くなる）', phase: '見えにくく、結{n}未満の壁を抜ける' },
+    ray:   { motion: '遠くまで伸びる', bind: '', divide: '壁を強く削る', convert: '', grow: '{c}本に増える（1本は軽くなる）', phase: '結{n}未満の壁と結界を抜ける' },
+    wall:  { motion: '遠くに立ち、照準の向きへ進んで体を押していく', bind: '硬くなる', divide: '', convert: '受け止めた一撃を魔力に変える', grow: '長くなる', phase: '見えにくい' },
+    field: { motion: '足元から照準の向きへ流れていく', bind: '弾を止める結界になる', divide: '開いた瞬間、相手の弾を吹き消す', convert: '通り抜ける相手の弾から魔力を吸う', grow: '長く残る', phase: '見えにくい（罠になる）' },
+    body:  { motion: '足が速くなる', bind: '受ける打撃が減る', divide: '鈍化や拘束をほどく', convert: '受けた打撃の一部を魔力に変える', grow: '体が再生する', phase: '姿を隠し、結{n}未満の壁を抜けて歩ける' },
+    orbit: { motion: '速く回る', bind: '刃が硬くなる', divide: '', convert: '受け止めた弾を魔力に変える', grow: '刃が{c}本になる', phase: '見えにくい' }
+  }
 };
-DATA.formOrder = ['point', 'line', 'plane', 'ring', 'field'];
-// 届き方。range / speed は乱戦の広さに合わせてある
-// falloff：1000 進むごとに失う威力の割合（③ 散逸。放った術は離れるほど散る）。hitMul は命中の倍率
-DATA.behaviors = {
-  project: { name: '射出',     glyph: '→', cost: 3,  wind: .8,   range: 780, speed: 820, falloff: .45, note: '直進。岩や結界に阻まれる。遠くほど威力が散る' },
-  homing:  { name: '追尾',     glyph: '◠', cost: 7,  wind: 1.05, range: 950, speed: 470, falloff: .35, note: '違う紋の大きな魔力へ曲がる。糸を維持すると照準へ誘導できる' },
-  lob:     { name: '投射',     glyph: '⌒', cost: 5,  wind: 1.0,  range: 560, speed: 560, falloff: 0,   note: '放物線で結界や岩を飛び越える。着地点が予告される' },
-  sow:     { name: '播種',     glyph: '✦', cost: 4,  wind: .9,   range: 420, speed: 480, falloff: 0,   note: '足元近くへ種を撒く。転がって止まり、罠になる' },
-  drop:    { name: '自位置',   glyph: '⊙', cost: 3,  wind: .85,  range: 0,   speed: 0,   falloff: 0,   note: '今いる場所に設置する' },
-  orbit:   { name: '周回',     glyph: '↻', cost: 7,  wind: 1.0,  range: 0,   speed: 0,   falloff: 0,   note: '術者に追従する。起動は常時。単一原理なら強化術。固体にすると刃が周りを回る' },
-  relay:   { name: '扇射',     glyph: '⌁', cost: 9,  wind: 1.3,  range: 640, speed: 780, falloff: .55, note: '三方へ撃ち分ける。散りやすい' },
-  beam:    { name: '貫通光線', glyph: '⚡', cost: 18, wind: 1.55, range: 950, speed: 0,   falloff: .06, hitMul: 2.6, note: '敵を貫く高出力の光線。遠くでもほとんど衰えない。設置壁で止まる。壁を壊した一撃も奥には届かない' }
-};
-DATA.behaviorOrder = ['project', 'homing', 'lob', 'sow', 'drop', 'orbit', 'relay', 'beam'];
-DATA.triggers = {
-  contact:   { name: '接触', glyph: '◆', cost: 0, note: '命中・接触で起動' },
-  fuse:      { name: '時限', glyph: '◷', cost: 2, note: '殻が散逸して割れた瞬間に起動（射出は狙点で炸裂）' },
-  proximity: { name: '感知', glyph: '◎', cost: 3, note: '違う紋が範囲に入ると起動。止まった術式は罠になる' },
-  command:   { name: '指示', glyph: '✱', cost: 3, note: '糸を通した合図で起動（F）。糸は自動で維持になる' }
-};
-DATA.triggerOrder = ['contact', 'fuse', 'proximity', 'command'];
-DATA.deploys = {
-  single:   { name: '単発', glyph: '·', cost: 0, note: '広がり方どおりに一度作用する' },
-  burst:    { name: '炸裂', glyph: '✸', cost: 3, note: '範囲を広げ、一瞬で炸裂する' },
-  scatter:  { name: '分裂', glyph: '❋', cost: 5, note: '追尾する小片に分かれる' },
-  linger:   { name: '残留', glyph: '◌', cost: 5, note: '領域が長く残り続ける' },
-  sprinkle: { name: '散魔', glyph: '∴', cost: 2, note: '攻撃せず、負荷の約8割を魔力の粒として撒く。誰でも拾え、追尾の囮になる' },
-  siphon:   { name: '吸魔', glyph: '⊛', cost: 5, note: '領域内の敵の魔力と魔素を奪い、周りの魔素を術者へ引く。威力は半減' }
-};
-DATA.deployOrder = ['single', 'burst', 'scatter', 'linger', 'sprinkle', 'siphon'];
-DATA.links = {
-  cut:  { name: '切断', glyph: '✂', cost: 0, note: '放った瞬間に糸を切る。維持費なし。術式どおりにしか動かない' },
-  hold: { name: '維持', glyph: '∿', cost: 3, note: '糸でつながり続ける。維持費がかかるが、誘導・指示起爆（F）・延命・回収（G）ができる' }
-};
-DATA.extraEffects = {
-  motion:  { note: '命中時に吹き飛ばしを追加' },
-  bind:    { note: '命中時に鈍化。2つ重ねると短く拘束' },
-  divide:  { note: '結界・殻を剥がし、威力+8%' },
-  convert: { note: '命中時に相手の魔力を奪う' },
-  grow:    { note: '命中時に追尾小片を生む' },
-  phase:   { note: '結界・硬化による減衰を受けにくい' }
-};
-// 質：魔力を固体（結晶）にして放つか、エネルギー（光と熱）のまま放つか。
-// 相性（じゃんけん）：エネルギーは固体の結界を貫き、固体はエネルギーの結界を剥がす。同じ質どうしは止まる
-DATA.matters = {
-  energy: { name: 'エネルギー', kanji: '光', speed: 1.08, fall: 1.3, cost: 1,   knock: 0,   note: '光と熱のまま放つ。速いが遠くで散りやすい。設置壁には止められる。領域型の結界には質の相性がある' },
-  solid:  { name: '固体',       kanji: '晶', speed: .86,  fall: .6,  cost: 1.1, knock: 120, note: '結晶に固めて放つ。遅いが重く、威力が落ちにくい。エネルギーの結界を剥がし、固体の結界には止められる。固体の結界はとても硬い' },
-  // 完全：固体とエネルギーを重ねた結界。どちらの質も通さず、光線でも砕けない（位相をずらす術と解体領域だけが抜ける）。
-  // 引き換えに消費は数倍、張っている間は魔力が戻らず減り続け、足が重く、術を唱えると解ける。結界・周回の術にだけ使える
-  perfect: { name: '完全',      kanji: '全', speed: 1,    fall: 1,   cost: 3.4, knock: 0,   note: '固体とエネルギーを重ねた完全な結界。何も通さない。ただし消費が非常に重く、張っている間は魔力が減り続け、足が重く、術を唱えると解ける（結界・周回だけ）' }
-};
-DATA.matterOrder = ['energy', 'solid', 'perfect'];
-// 形：飛ぶ術式と周回の刃の形。
-// speed 速さ・size 当たり判定の大きさ・dmg 威力・fall 遠くでの衰え・pierce 斬り抜ける人数・bounce 跳ね返る回数・range 射程
-// ward 結界への威力（貫通力。砕ききれば止まらず抜ける）・knock 押し込み・returns 戻ってくる・cost 形作る負荷
-// orbit：周回させたときの本数・大きさ・回る速さ・硬さ・斬る威力の倍率
-const SH = o => ({ speed: 1, size: 1, dmg: 1, fall: 1, pierce: 0, bounce: 0, range: 1, ward: 1, knock: 0, returns: false, cost: 0, ...o, orbit: { count: 1, size: 1, spin: 1, hp: 1, mul: 1, ...(o.orbit || {}) } });
+// 見た目：弾と環の形。性能は変わらない（原理が性能を決める）
 DATA.shapes = {
-  needle:   SH({ name: '針',     speed: 1.1,  size: .8,   dmg: .95, fall: .9, ward: .8, note: '細く速い。当たりは小さい' }),
-  orb:      SH({ name: '球',     speed: .95,  size: 1.25, fall: 1.1, note: '大きく当たりやすいが、少し遅い' }),
-  shard:    SH({ name: '結晶',   dmg: 1.04, ward: 1.2, note: '尖った結晶。結界に少し強い' }),
-  arrow:    SH({ name: '矢',     speed: 1.4,  size: .6,   dmg: .9, fall: .5, range: 1.35, ward: 1.1, cost: 1, note: '細く最も速い矢。当たりはとても小さいが、遠くまで届く' }),
-  blade:    SH({ name: '刀',     speed: .9,   size: 1.55, dmg: 1.14, fall: 1.25, range: .85, ward: 1.1, cost: 2, note: '幅の広い直刀。当たりが大きく重いが、遠くでは鈍る' }),
-  katana:   SH({ name: '日本刀', speed: 1.02, size: 1.3,  dmg: 1.08, fall: 1.05, pierce: 1, range: .95, ward: 1.3, cost: 3, note: '反りのある刃。一人を斬り抜けて、後ろの相手にも届く' }),
-  scythe:   SH({ name: '大鎌',   speed: .85,  size: 2.1,  fall: 1.2, pierce: 2, range: .7, ward: .8, cost: 4, orbit: { size: 1.3, spin: .8, mul: 1.3 }, note: '弧を描く大きな刃。当たりが最も広く、三人まで薙ぎ払うが、射程が短い' }),
-  axe:      SH({ name: '斧',     speed: .8,   size: 1.4,  dmg: 1.3, fall: 1.3, range: .75, ward: 2.5, knock: 200, cost: 3, note: '重い斧。遅いが一撃が重く、結界を叩き割る' }),
-  hammer:   SH({ name: '槌',     speed: .75,  size: 1.5,  dmg: 1.2, fall: 1.2, range: .75, ward: 3, knock: 340, cost: 4, note: '巨大な槌。結界に最も強く、当たった相手を大きく吹き飛ばす' }),
-  shuriken: SH({ name: '手裏剣', speed: 1.2,  size: .9,   dmg: .86, fall: .75, bounce: 2, range: 1.05, cost: 2, note: '回る四方の刃。岩や結界に当たると二度まで跳ね返る' }),
-  chakram:  SH({ name: '円月輪', speed: 1.1,  size: 1.1,  dmg: .92, returns: true, cost: 3, note: '回る輪。遠くまで飛ぶと手元へ戻ってきて、帰りにも当たる' }),
-  spear:    SH({ name: '槍',     speed: 1.3,  size: .8,   dmg: 1.1, fall: .45, range: 1.25, ward: 1.8, cost: 3, note: '長い穂先。最も衰えず、結界を突き通す力が強い' }),
-  castle:   SH({ name: '城',     speed: .6,   size: 2.0,  dmg: .8, range: .7, ward: 2, cost: 5, orbit: { count: 2.4, size: 2.2, spin: .1, hp: 3.2, mul: .25 }, note: '石の城壁。飛ばすと遅く重い塊。周回させると、ほとんど回らない城壁が自分を囲む' })
+  needle: { name: '針' }, orb: { name: '球' }, shard: { name: '結晶' }, arrow: { name: '矢' }, blade: { name: '刀' }, katana: { name: '日本刀' },
+  scythe: { name: '大鎌' }, axe: { name: '斧' }, hammer: { name: '槌' }, shuriken: { name: '手裏剣' }, chakram: { name: '円月輪' }, spear: { name: '槍' }, castle: { name: '城' }
 };
 DATA.shapeOrder = ['needle', 'orb', 'shard', 'arrow', 'blade', 'katana', 'scythe', 'axe', 'hammer', 'shuriken', 'chakram', 'spear', 'castle'];
-// 保存された術の見た目のキー（visualShape）。auto は広がり方から決める
-// 術の名前の組み立て方：基の名（現象）＋ join ＋ 形の字。光線は beam の {0} に基の名（末尾の beamStrip を外す）。追加性質は extraSep の後に字を並べる
-DATA.naming = {
-  join: '', extraSep: '・', beam: '{0}貫通光線', beamStrip: '刃',
-  shapeSuffix: { needle: '針', orb: '弾', shard: '刃', arrow: '矢', blade: '刀', katana: '太刀', scythe: '鎌', axe: '斧', hammer: '槌', shuriken: '星', chakram: '輪', spear: '槍', castle: '城' }
-};
-DATA.visualShapes = { auto: '自動' };
-for (const k of DATA.shapeOrder) DATA.visualShapes[k] = DATA.shapes[k].name;
-// 世界の決まり（旧版 WORLD と同じ意味。乱戦用に一部を調整）
+// 世界の決まり（糸・回収・制御容量・暴発）
 DATA.RULES = {
   link: { range: 900, upkeepBase: 0.55, upkeepScale: 0.018, upkeepMul: 2.6, decayMul: 0.35, guideTurn: 4.6, severedLife: 1.4 },
   recall: { refund: 0.6 },
-  complexity: { freeParts: 4, perPart: .09, exponent: 1.35, windPerPart: .05, maxWind: 2.4 },
-  // 純度：部品が少ない単調な術ほど燃費が良く威力が高い。部品が多い複雑な術ほど威力が落ちる
-  // 威力倍率 = 基準部品数以下なら 1 + bonus × 不足分、超えたら 1 − penalty × 超過分（下限 min）。消費は不足分 × costCut だけ安い
-  purity: { base: 4, bonus: .1, penalty: .06, min: .65, costCut: .07 },
-  // 術どうしの干渉：強い方が弱い方に削られる割合（固体の衝突・エネルギーの相殺）
-  // melt：エネルギーが固体を貫くとき、固体が熱で削れる割合（エネルギーの威力に対して）
-  // fusion：自分のエネルギーどうしが融合するとき取り込む割合。enchant：自分の固体にエネルギーが宿るとき上乗せする割合
-  interfere: { solidLoss: .6, energyLoss: 1, melt: .5, fusion: .9, enchant: .8 },
-  // 共鳴：自分の紋の場を通った術の威力の倍率。誘爆：起動した術が自分の罠を連鎖させる距離（× 広がり）
-  resonance: 1.3, chainReach: 1.1,
-  // 戻る術（円月輪）が手元へ戻ったとき、消費のうち戻る魔力の割合
+  // 回帰の弾を受け止めたとき、消費のうち戻る魔力の割合
   returnRefund: .5,
-  // 時限の殻が割れるまでの秒数（× 時限・持続）
-  fuse: .8,
-  // 残留の場：0.5秒ごとの作用の倍率と、中の相手を鈍らせる割合
-  linger: { tick: .55, slow: .3 },
-  // 吸魔：威力の倍率、0.5秒ごとに奪う魔力と魔素
-  siphon: { dmg: .8, mp: 9, mass: 1.6 },
-  // 散魔：負荷のうち魔力の粒として撒く割合
-  sprinkle: 1,
-  // 拘束の秒数（× 時限・持続）：慣性拘束・根絡・位相牢。毒の毎秒の威力（× 命中の威力）
-  bind: { tether: 1.0, root: 1.9, prison: 2.3 },
-  poisonDps: .26,
-  // 遠くでの衰え：届き方の falloff × 質 × 形。下限 min
+  // 術どうしの干渉：強い方が弱い方に削られる割合（固体の衝突・エネルギーの相殺）
+  // melt：エネルギーが固体を貫くとき、固体が熱で削れる割合。fusion / enchant：自分の弾どうしが融合・魔装するときの上乗せ
+  interfere: { solidLoss: .6, energyLoss: 1, melt: .5, fusion: .9, enchant: .8, pierceKeep: .6 },
+  // 遠くでの衰え（1000 あたり）の下限
   falloff: { per: 1000, min: .35 },
-  // 質の相性。pierceWard：エネルギーが固体の結界を貫くとき結界に与える割合、pierceKeep：貫いた後に残る威力
-  // strip：固体がエネルギーの結界を剥がすときの倍率。beamSolid / beamWard：光線が固体 / エネルギーの結界に与える倍率
-  // breakKeep：形の貫通力で結界を砕ききったとき、抜けた先に残る威力
-  clash: { pierceWard: .4, pierceKeep: .6, strip: 4, beamSolid: 1, beamWard: 2.2, breakKeep: .7 },
-  // 固体の結界の硬さの倍率。面の結界（壁・環の城壁）の硬さの倍率（1枚でこれだけ硬い）
-  solidWardHp: 1.8, slabHp: 3.2,
-  // 完全の結界：張っている間に減る魔力（毎秒）と、足の重さ
-  perfect: { drain: 9, slow: .45 },
-  // 周回の刃（固体の周回）：広がり方ごとの本数と回る半径、持続・回る速さ・硬さ・同じ相手を斬る間隔・威力の倍率
-  orbiter: { count: { point: 2, line: 3, plane: 4, ring: 5, field: 6 }, radius: { point: 34, line: 42, plane: 52, ring: 64, field: 82 }, life: 6, spin: 3.2, hp: 22, hitCd: .45, mul: .7 },
-  // 結界（領域型）の硬さ = (base + 制圧力 × perControl) × 強弱
-  barrierHp: { base: 40, perControl: .8 },
-  // 制御容量：旧版は職業ごと（巫女4・前衛5・術者7・観測9）。乱戦ではレベルで育つ
+  // 制御容量：レベルで育つ。超えた点1つにつき暴発率が上がる
   capacity: [[0, 4], [3, 5], [7, 7], [12, 9]],
   misfire: { perOverPart: .16, max: .8, selfDamage: .45 },
-  maxExtras: 4,
   decoy: { life: 3.6, weight: 70 },
-  power: [0.7, 1.6], duration: [0.6, 2], rate: [1, 3], velocity: [0.5, 2], velocityCost: 0.35,
-  // 乱戦は旧版より速い：詠唱をこの倍率で縮める。消費は旧版よりやや重い
-  costScale: 0.95, windScale: 0.62, rapidGap: 0.12
+  // 合図を待つ弾の寿命（秒 × 持続）
+  wait: 6
 };
-// 原理の組み合わせ表（旧版そのまま）。キーは a と b をアルファベット順に '|' で結ぶ。単一原理は '<a>|none'
-DATA.pairData = {
-    // ── 単一原理（純放出）。部品が少ないぶん安く速い ──
-    'motion|none':   { base: '魔弾',     type: 'bolt',    desc: '自分の紋の魔力をそのまま押し出す純放出。安く速いが副作用はない。', tags: ['純放出', '低燃費', '速射'], power: 60, control: 18, terrain: 10 },
-    'bind|none':     { base: '固化',     type: 'solid',   desc: '魔力を高密度に固めて障壁を作る。糸を維持すれば回収（G）で魔力の一部が戻る。', tags: ['固化', '障壁', '回収可'], power: 16, control: 70, terrain: 90 },
-    'divide|none':   { base: '分解',     type: 'sunder',  desc: '違う紋の構造をほどく。結界・反力を剥がし、術式で作られた壁を崩す。', tags: ['剥離', '構造破壊', '対結界'], power: 70, control: 22, terrain: 40 },
-    'convert|none':  { base: '吸奪',     type: 'drain',   desc: '触れた相手の魔力の紋を書き換え、自分の魔素として奪う。', tags: ['魔素奪取', '継戦', '低威力'], power: 28, control: 40, terrain: 8 },
-    'grow|none':     { base: '修復',     type: 'mend',    desc: '自分の紋の魔力で崩れた構造を埋め直す。味方には紋の変換ロスが出る。', tags: ['回復', '味方支援', '変換ロス'], power: 20, control: 30, terrain: 20 },
-    'phase|none':    { base: '位相化',   type: 'veil',    desc: '自分の位相を一瞬ずらし、放った直後の攻撃をすり抜ける。', tags: ['回避', '無敵時間', '低威力'], power: 18, control: 50, terrain: 5 },
-    // ── 二原理 ──
-    'bind|motion':   { base: '慣性拘束', type: 'tether',  desc: '移動しようとする力を結び、中心へ引き戻し続ける。', tags: ['拘束', '引き戻し', '地形係留'], power: 42, control: 88, terrain: 64 },
-    'divide|grow':   { base: '腐蝕胞子', type: 'poison',  desc: '分解作用が自己増殖し、接触面を侵す毒性領域へ変わる。', tags: ['毒', '持続侵蝕', '拡散'], power: 68, control: 54, terrain: 82 },
-    'bind|grow':     { base: '根絡',     type: 'root',    desc: '結合が地中へ増殖し、足場から対象を縫い止める。', tags: ['足止め', '根壁', '地形生成'], power: 28, control: 96, terrain: 91 },
-    'motion|motion': { base: '共振衝撃', type: 'shock',   desc: '二重の運動を同調させ、接触点から衝撃を円状に解放する。', tags: ['衝撃波', '吹き飛ばし', '破砕'], power: 91, control: 45, terrain: 58 },
-    'convert|grow':  { base: '生体転写', type: 'bloom',   desc: '奪った魔素を増殖可能な構造へ変え、回復場として定着させる。', tags: ['吸収', '再生', '領域維持'], power: 30, control: 40, terrain: 72 },
-    'bind|phase':    { base: '位相牢',   type: 'prison',  desc: '対象の位相を空間へ結合し、境界を越える動きを封じる。', tags: ['隔離', '境界封鎖', '防御'], power: 36, control: 94, terrain: 74 },
-    'divide|phase':  { base: '虚蝕',     type: 'void',    desc: '物質の位相境界だけを分解し、防壁を無視して侵入する。', tags: ['貫通', '防壁無視', '高負荷'], power: 74, control: 22, terrain: 12 },
-    'motion|phase':  { base: '転位穿孔', type: 'blink',   desc: '運動の到達点へ位相を先行させ、術式と術者を跳躍させる。', tags: ['転移', '貫通', '奇襲'], power: 66, control: 35, terrain: 18 },
-    'convert|divide':{ base: '崩壊変換', type: 'corrode', desc: '分解した構造を不安定な魔素へ変換し、地形ごと崩す。', tags: ['腐食', '地形破壊', '魔素回収'], power: 76, control: 48, terrain: 88 },
-    'convert|motion':{ base: '反力変換', type: 'counter', desc: '受けた運動を魔素へ変換し、逆方向へ放出する。', tags: ['反射', '吸収', '反撃'], power: 62, control: 66, terrain: 24 },
-    'grow|motion':   { base: '連鎖波',   type: 'cascade', desc: '運動が伝播するたび次の波を増殖させ、複数地点へ連鎖する。', tags: ['連鎖', '波及', '面制圧'], power: 71, control: 61, terrain: 56 },
-    'bind|convert':  { base: '物性編壁', type: 'wall',    desc: '周囲の地形を結合し直し、性質を変えた障壁を組み上げる。', tags: ['防壁', '地形利用', '変質'], power: 18, control: 82, terrain: 98 },
-    'divide|motion': { base: '断裂刃',   type: 'rend',    desc: '運動の軌跡そのものを分解し、通過線上を切り裂く。', tags: ['切断', '直線', '装甲貫通'], power: 84, control: 38, terrain: 30 },
-    'grow|phase':    { base: '重層鏡界', type: 'mirror',  desc: '位相を増殖させ、術者の像を複数展開して攻撃を分散させる。', tags: ['分身', '回避', '撹乱'], power: 34, control: 72, terrain: 40 },
-    'bind|bind':     { base: '重縛結界', type: 'bulwark', desc: '結合を二重に閉じ、味方を包む減衰結界を編む。', tags: ['防御', '味方支援', '減衰'], power: 12, control: 90, terrain: 55 },
-    'convert|phase': { base: '位相転換', type: 'shift',   desc: '受けた術式の位相を書き換え、術者の魔素へ戻す。', tags: ['魔素回収', '無効化', '再構成'], power: 40, control: 76, terrain: 20 },
-    'grow|grow':     { base: '増殖苗床', type: 'swarm',   desc: '増殖が増殖を呼び、自走する小片が対象を追尾する。', tags: ['追尾', '数的圧', '持続'], power: 54, control: 58, terrain: 66 },
-    'phase|phase':   { base: '相干観測', type: 'scan',    desc: '位相を重ね合わせ、触れた対象の構造値（耐久・魔素）を読み取る。', tags: ['観測', '情報', '低威力'], power: 14, control: 30, terrain: 6 },
-    'convert|convert':{ base: '魔素収束', type: 'well',   desc: '変換を重ねて魔素の流れを一点へ束ね、周囲の魔素を引き寄せる井戸を作る。', tags: ['魔素集束', '回復効率', '設置'], power: 6, control: 40, terrain: 30 },
-    'bind|divide':   { base: '掘削塹壕', type: 'trench',  desc: '結合を裂いて地面を掘り下げ、身を隠せる溝を組み上げる。射線を切る。', tags: ['遮蔽', '地形生成', '防御'], power: 14, control: 60, terrain: 96 },
-    'divide|divide': { base: '解体領域', type: 'unmake',  desc: '結合という結合を解く。地形も術式も等しく解ける。', tags: ['術式解除', '地形破壊', '高負荷'], power: 70, control: 44, terrain: 94 }
-  };
 
-// 最初に持っている4つの術（旧版の初期術式と同じ顔ぶれ。はじめの制御容量4に収まるよう、炸裂・時限を外してある）
-DATA.defaultSpells = [
-  { a: 'motion', b: 'none',    form: 'point', behavior: 'project', trigger: 'contact', deploy: 'single' },
-  { a: 'divide', b: 'motion',  form: 'point', behavior: 'homing',  trigger: 'contact', deploy: 'single' },
-  { a: 'motion', b: 'motion',  form: 'ring',  behavior: 'lob',     trigger: 'contact', deploy: 'single' },
-  { a: 'bind',   b: 'convert', form: 'plane', behavior: 'drop',    trigger: 'contact', deploy: 'single' }
-];
-// 作例（旧版の作例と同じ顔ぶれ＋乱戦向け）
+// 段を短く書くための道具（作例・流派・Botの持ち術）
+const ST = (vessel, p = {}, o = {}) => ({ vessel, p, ...o });
+const RC = (...stages) => ({ v: 3, stages });
+const RL = (...stages) => ({ v: 3, stages, link: true });
+// 作例（型）：どれも同じ規則で書かれた、編集できるレシピ
 DATA.presets = {
-  bolt:    { label: '純放出（1部品）',  r: { a: 'motion', b: 'none', form: 'point', behavior: 'project', trigger: 'contact', deploy: 'single' } },
-  shock:   { label: '共振衝撃針',       r: { a: 'motion', b: 'motion', form: 'point', behavior: 'project', trigger: 'contact', deploy: 'single' } },
-  guided:  { label: '糸で誘導',         r: { a: 'divide', b: 'motion', form: 'point', behavior: 'homing', trigger: 'contact', deploy: 'single', link: 'hold' } },
-  beam:    { label: '貫通光線',         r: { a: 'divide', b: 'motion', form: 'line', behavior: 'beam', trigger: 'contact', deploy: 'single' } },
-  remote:  { label: '遠隔起爆',         r: { a: 'motion', b: 'motion', form: 'ring', behavior: 'sow', trigger: 'command', deploy: 'burst', link: 'hold' } },
-  solid:   { label: '固化盾（回収可）', r: { a: 'bind', b: 'none', form: 'plane', behavior: 'drop', trigger: 'contact', deploy: 'single', link: 'hold' } },
-  wall:    { label: '物性編壁',         r: { a: 'bind', b: 'convert', form: 'plane', behavior: 'lob', trigger: 'contact', deploy: 'single' } },
-  barrier: { label: '魔力バリア',       r: { a: 'bind', b: 'bind', form: 'ring', behavior: 'orbit', trigger: 'contact', deploy: 'linger', matter: 'energy' } },
-  blades:  { label: '周回刃（固体）',   r: { a: 'divide', b: 'motion', form: 'ring', behavior: 'orbit', trigger: 'contact', deploy: 'single', matter: 'solid', visualShape: 'katana' } },
-  spear:   { label: '晶槍（固体）',     r: { a: 'motion', b: 'none', form: 'point', behavior: 'project', trigger: 'contact', deploy: 'single', matter: 'solid', visualShape: 'spear' } },
-  shuriken:{ label: '手裏剣（固体）',   r: { a: 'motion', b: 'motion', form: 'point', behavior: 'project', trigger: 'contact', deploy: 'single', matter: 'solid', visualShape: 'shuriken' } },
-  katana:  { label: '斬光（日本刀）',   r: { a: 'divide', b: 'motion', form: 'point', behavior: 'project', trigger: 'contact', deploy: 'single', matter: 'energy', visualShape: 'katana' } },
-  axe:     { label: '破城斧（固体）',   r: { a: 'motion', b: 'motion', form: 'point', behavior: 'project', trigger: 'contact', deploy: 'single', matter: 'solid', visualShape: 'axe' } },
-  chakram: { label: '円月輪（固体）',   r: { a: 'divide', b: 'none', form: 'point', behavior: 'project', trigger: 'contact', deploy: 'single', matter: 'solid', visualShape: 'chakram' } },
-  arrow:   { label: '光矢（三連）',     r: { a: 'motion', b: 'none', form: 'point', behavior: 'project', trigger: 'contact', deploy: 'single', matter: 'energy', visualShape: 'arrow', rate: 3 } },
-  bastion: { label: '石壁（面の固体結界）', r: { a: 'bind', b: 'none', form: 'plane', behavior: 'lob', trigger: 'contact', deploy: 'single', matter: 'solid' } },
-  castle:  { label: '城塞（周回の城壁）', r: { a: 'bind', b: 'convert', form: 'ring', behavior: 'orbit', trigger: 'contact', deploy: 'single', matter: 'solid', visualShape: 'castle' } },
-  aegis:   { label: '完全結界',         r: { a: 'bind', b: 'bind', form: 'ring', behavior: 'orbit', trigger: 'contact', deploy: 'single', matter: 'perfect' } },
-  reflect: { label: '反射',             r: { a: 'convert', b: 'motion', form: 'ring', behavior: 'orbit', trigger: 'contact', deploy: 'linger' } },
-  shift:   { label: '無効化',           r: { a: 'convert', b: 'phase', form: 'ring', behavior: 'orbit', trigger: 'contact', deploy: 'linger' } },
-  poison:  { label: '腐蝕の罠',         r: { a: 'divide', b: 'grow', form: 'ring', behavior: 'sow', trigger: 'proximity', deploy: 'linger' } },
-  blink:   { label: '転位穿孔',         r: { a: 'motion', b: 'phase', form: 'point', behavior: 'project', trigger: 'contact', deploy: 'single' } },
-  well:    { label: '魔素収束',         r: { a: 'convert', b: 'convert', form: 'ring', behavior: 'lob', trigger: 'contact', deploy: 'single' } },
-  mend:    { label: '自己修復',         r: { a: 'grow', b: 'none', form: 'ring', behavior: 'drop', trigger: 'contact', deploy: 'linger' } },
-  haste:   { label: '加速（強化術）',   r: { a: 'motion', b: 'none', form: 'field', behavior: 'orbit', trigger: 'contact', deploy: 'single' } },
-  harden:  { label: '硬化（強化術）',   r: { a: 'bind', b: 'none', form: 'ring', behavior: 'orbit', trigger: 'contact', deploy: 'single' } },
-  vital:   { label: '活性（強化術）',   r: { a: 'grow', b: 'none', form: 'field', behavior: 'orbit', trigger: 'contact', deploy: 'single' } },
-  heavy:   { label: '9部品の重術式',    r: { a: 'divide', b: 'motion', form: 'point', behavior: 'homing', trigger: 'proximity', deploy: 'scatter', link: 'hold', extras: ['bind', 'convert', 'divide'] } }
+  bolt:     { label: '魔弾',       r: RC(ST('bolt', { divide: 1, motion: 1 })) },
+  lance:    { label: '晶槍',       r: RC(ST('bolt', { divide: 2, motion: 2 }, { matter: 'solid', look: 'spear' })) },
+  shotgun:  { label: '散弾',       r: RC(ST('bolt', { grow: 2, divide: 1 }, { size: .8, time: .6, look: 'shard' })) },
+  seeker:   { label: '追尾針',     r: RC(ST('bolt', { divide: 2 }, { path: 'seek', look: 'needle' })) },
+  chakram:  { label: '回帰輪',     r: RC(ST('bolt', { divide: 2 }, { path: 'return', matter: 'solid', look: 'chakram' })) },
+  ray:      { label: '断ち光線',   r: RC(ST('ray', { divide: 3 })) },
+  anchor:   { label: '鎖の錨',     r: RC(ST('bolt', { bind: 2, motion: 1 }, { force: 'pull', look: 'spear' })) },
+  burst:    { label: '爆裂球',     r: RC(ST('bolt', {}, { then: 'hit', look: 'orb' }), ST('field', { divide: 2, motion: 1 }, { size: .9, time: .5 })) },
+  well:     { label: '重力井',     r: RC(ST('bolt', {}, { path: 'arc', then: 'hit', look: 'orb' }), ST('field', { motion: 2, bind: 1 }, { force: 'pull', time: 1.3 })) },
+  remote:   { label: '遠隔起爆',   r: RL(ST('bolt', {}, { then: 'signal', look: 'orb' }), ST('field', { divide: 2 })) },
+  mine:     { label: '見えない地雷', r: RC(ST('field', { phase: 2 }, { size: .6, time: 2, then: 'hit' }), ST('field', { divide: 2 }, { size: .9, time: .5 })) },
+  stoneWall:{ label: '石壁',       r: RC(ST('wall', { bind: 3 }, { matter: 'solid' })) },
+  drainWall:{ label: '吸魔の壁',   r: RC(ST('wall', { bind: 1, convert: 2 })) },
+  counterWall:{ label: '反撃の壁', r: RC(ST('wall', { bind: 2 }, { matter: 'solid', then: 'break' }), ST('field', { divide: 2, motion: 1 }, { time: .5 })) },
+  barrier:  { label: '結界',       r: RC(ST('field', { bind: 3 }, { size: .75, time: 1.5 })) },
+  guardRing:{ label: '守りの環',   r: RC(ST('orbit', { bind: 2, grow: 1 }, { matter: 'solid', look: 'castle' })) },
+  bladeRing:{ label: '刃の環',     r: RC(ST('orbit', { divide: 2, motion: 1 }, { matter: 'solid', look: 'katana' })) },
+  haste:    { label: '疾走',       r: RC(ST('body', { motion: 2 })) },
+  harden:   { label: '硬化',       r: RC(ST('body', { bind: 2 })) },
+  mend:     { label: '再生',       r: RC(ST('body', { grow: 2 })) },
+  cloak:    { label: '隠れ身',     r: RC(ST('body', { phase: 2 })) },
+  absorb:   { label: '吸収の衣',   r: RC(ST('body', { convert: 2, bind: 1 })) },
+  ghost:    { label: '壁抜けの弾', r: RC(ST('bolt', { phase: 2, divide: 1 }, { look: 'needle' })) },
+  cluster:  { label: '分裂弾',     r: RC(ST('bolt', { divide: 1 }, { then: 'end', time: .4, look: 'shuriken' }), ST('bolt', { grow: 2, divide: 1 }, { size: .8, time: .5 })) }
 };
-DATA.presetOrder = ['bolt', 'arrow', 'spear', 'shuriken', 'chakram', 'katana', 'axe', 'shock', 'guided', 'beam', 'remote', 'solid', 'bastion', 'wall', 'barrier', 'blades', 'castle', 'aegis', 'reflect', 'shift', 'poison', 'blink', 'well', 'mend', 'haste', 'harden', 'vital', 'heavy'];
+DATA.presetOrder = ['bolt', 'lance', 'shotgun', 'seeker', 'chakram', 'ray', 'anchor', 'ghost', 'burst', 'well', 'cluster', 'remote', 'mine',
+  'stoneWall', 'drainWall', 'counterWall', 'barrier', 'guardRing', 'bladeRing', 'haste', 'harden', 'mend', 'cloak', 'absorb'];
+// 術式台で最初に並べる作例
+DATA.presetStarters = ['bolt', 'burst', 'anchor', 'stoneWall', 'bladeRing', 'mend', 'ray', 'mine'];
+// 最初に持っている4つの術（はじめの制御容量4に収まる）
+DATA.defaultSpells = ['bolt', 'burst', 'stoneWall', 'mend'].map(k => DATA.presets[k].r);
 // 達人の流派：Bot はどれか一つの流派を修め、名を付けた術を叫んで使い分ける（遊ぶ人へのお手本）。
 // keep は相手との間合い。術は 4 つ。術式台の「達人の術」からも読み込める
 const M = (customName, r) => ({ customName, ...r });
 DATA.schools = [
   { key: 'archer', name: '光芒の射手', keep: 560, spells: [
-    M('流星', { a: 'motion', b: 'none', form: 'point', behavior: 'project', matter: 'energy', visualShape: 'arrow', rate: 3 }),
-    M('天穿', { a: 'divide', b: 'motion', behavior: 'beam', power: 1.3 }),
-    M('砦', { a: 'bind', b: 'none', form: 'plane', behavior: 'lob', matter: 'solid' }),
-    M('疾風', { a: 'motion', b: 'none', form: 'field', behavior: 'orbit' })
+    M('流星', RC(ST('bolt', { divide: 1, motion: 2, grow: 1 }, { look: 'arrow' }))),
+    M('天穿', RC(ST('ray', { divide: 3, motion: 1 }))),
+    M('砦', RC(ST('wall', { bind: 3 }, { matter: 'solid' }))),
+    M('疾風', RC(ST('body', { motion: 2 })))
   ] },
   { key: 'blade', name: '剣聖', keep: 260, spells: [
-    M('朧斬', { a: 'divide', b: 'motion', form: 'point', behavior: 'project', matter: 'energy', visualShape: 'katana', rate: 2 }),
-    M('八重桜', { a: 'divide', b: 'motion', form: 'ring', behavior: 'orbit', matter: 'solid', visualShape: 'katana' }),
-    M('縮地', { a: 'motion', b: 'phase', form: 'point', behavior: 'project' }),
-    M('大鎌・宵薙ぎ', { a: 'divide', b: 'motion', form: 'point', behavior: 'project', matter: 'solid', visualShape: 'scythe' })
+    M('朧斬', RC(ST('bolt', { divide: 2, motion: 1 }, { look: 'katana' }))),
+    M('八重桜', RC(ST('orbit', { divide: 2, grow: 1 }, { matter: 'solid', look: 'katana' }))),
+    M('縮地', RC(ST('body', { motion: 3, phase: 1 }, { time: .6 }))),
+    M('大鎌・宵薙ぎ', RC(ST('bolt', { divide: 2, motion: 1 }, { matter: 'solid', look: 'scythe', size: 1.5, time: .6 })))
   ] },
   { key: 'fortress', name: '城塞の主', keep: 300, spells: [
-    M('破城', { a: 'motion', b: 'motion', form: 'point', behavior: 'project', matter: 'solid', visualShape: 'axe' }),
-    M('金城', { a: 'bind', b: 'convert', form: 'ring', behavior: 'orbit', matter: 'solid', visualShape: 'castle' }),
-    M('絶界', { a: 'bind', b: 'bind', form: 'ring', behavior: 'orbit', matter: 'perfect' }),
-    M('地鳴り', { a: 'motion', b: 'motion', form: 'ring', behavior: 'lob', deploy: 'burst', matter: 'solid', visualShape: 'hammer' })
+    M('破城', RC(ST('bolt', { divide: 2, motion: 2 }, { matter: 'solid', look: 'axe' }))),
+    M('金城', RC(ST('orbit', { bind: 2, grow: 1 }, { matter: 'solid', look: 'castle' }))),
+    M('絶界', RC(ST('field', { bind: 3, convert: 1 }, { size: .8, time: 1.5 }))),
+    M('地鳴り', RC(ST('bolt', {}, { path: 'arc', matter: 'solid', look: 'hammer', then: 'hit' }), ST('field', { motion: 2, divide: 1 }, { time: .5 })))
   ] },
   { key: 'curse', name: '呪術師', keep: 380, spells: [
-    M('瘴気の種', { a: 'divide', b: 'grow', form: 'ring', behavior: 'sow', trigger: 'proximity', deploy: 'linger' }),
-    M('縛鎖', { a: 'bind', b: 'grow', form: 'ring', behavior: 'lob' }),
-    M('魂喰らい', { a: 'convert', b: 'none', form: 'point', behavior: 'homing', rate: 2 }),
-    M('虚ろ穿ち', { a: 'divide', b: 'phase', form: 'point', behavior: 'project', visualShape: 'spear' })
+    M('瘴気の種', RC(ST('field', { phase: 1 }, { size: .6, time: 2, then: 'hit' }), ST('field', { divide: 1, bind: 1 }, { time: 1.5 }))),
+    M('縛鎖', RC(ST('bolt', { bind: 2 }, { path: 'seek' }))),
+    M('魂喰らい', RC(ST('bolt', { convert: 2, divide: 1 }, { path: 'seek' }))),
+    M('虚ろ穿ち', RC(ST('bolt', { phase: 2, divide: 2 }, { look: 'spear' })))
   ] },
   { key: 'bomber', name: '爆破師', keep: 330, spells: [
-    M('爆縛陣', { a: 'motion', b: 'motion', form: 'ring', behavior: 'sow', trigger: 'command', deploy: 'burst', link: 'hold' }),
-    M('崩天', { a: 'motion', b: 'motion', form: 'ring', behavior: 'lob', deploy: 'burst' }),
-    M('散華', { a: 'motion', b: 'motion', form: 'point', behavior: 'project', trigger: 'fuse', deploy: 'scatter', visualShape: 'shuriken' }),
-    M('反転', { a: 'convert', b: 'motion', form: 'ring', behavior: 'orbit', deploy: 'linger' })
+    M('爆縛陣', RL(ST('bolt', {}, { then: 'signal', look: 'orb' }), ST('field', { divide: 2, bind: 1 }))),
+    M('崩天', RC(ST('bolt', {}, { path: 'arc', then: 'hit', look: 'orb' }), ST('field', { divide: 2, motion: 1 }, { size: 1.2, time: .5 }))),
+    M('散華', RC(ST('bolt', { motion: 1 }, { then: 'end', time: .5, look: 'shuriken' }), ST('bolt', { grow: 2, divide: 1 }, { size: .8, time: .5 }))),
+    M('反転', RC(ST('wall', { bind: 1, convert: 2 })))
   ] },
   { key: 'swarm', name: '群れ使い', keep: 420, spells: [
-    M('千本桜', { a: 'grow', b: 'grow', form: 'point', behavior: 'homing', deploy: 'scatter' }),
-    M('三叉雷', { a: 'grow', b: 'motion', form: 'point', behavior: 'relay', rate: 2 }),
-    M('奪魂域', { a: 'convert', b: 'divide', form: 'ring', behavior: 'lob', deploy: 'siphon' }),
-    M('再生', { a: 'grow', b: 'none', form: 'ring', behavior: 'drop', deploy: 'linger' })
+    M('千本桜', RC(ST('bolt', { grow: 3, divide: 1 }, { path: 'seek', size: .7 }))),
+    M('三叉雷', RC(ST('bolt', { grow: 2, motion: 1, divide: 1 }))),
+    M('奪魂域', RC(ST('bolt', {}, { path: 'arc', then: 'hit' }), ST('field', { convert: 2 }, { time: 1.5 }))),
+    M('再生', RC(ST('body', { grow: 2 })))
   ] },
   { key: 'storm', name: '雷帝', keep: 470, spells: [
-    M('雷槍', { a: 'motion', b: 'none', form: 'point', behavior: 'project', matter: 'energy', visualShape: 'spear', rate: 2 }),
-    M('天雷', { a: 'grow', b: 'motion', form: 'line', behavior: 'beam', power: 1.2 }),
-    M('雷鳴環', { a: 'grow', b: 'motion', form: 'ring', behavior: 'lob', deploy: 'linger' }),
-    M('魔素収束', { a: 'convert', b: 'convert', form: 'ring', behavior: 'lob' })
+    M('雷槍', RC(ST('bolt', { motion: 2, divide: 1 }, { look: 'spear' }))),
+    M('天雷', RC(ST('ray', { divide: 2, grow: 1 }))),
+    M('雷鳴環', RC(ST('bolt', {}, { path: 'arc', then: 'hit' }), ST('field', { divide: 1, motion: 1 }, { force: 'spin', time: 1.5 }))),
+    M('魔素収束', RC(ST('field', { convert: 2, grow: 1 }, { size: .8 })))
   ] },
   { key: 'mirror', name: '鏡の魔女', keep: 400, spells: [
-    M('月輪', { a: 'divide', b: 'none', form: 'point', behavior: 'project', matter: 'solid', visualShape: 'chakram' }),
-    M('鏡花', { a: 'grow', b: 'phase', form: 'ring', behavior: 'drop' }),
-    M('水鏡', { a: 'convert', b: 'phase', form: 'ring', behavior: 'orbit', deploy: 'linger' }),
-    M('慣性の鎖', { a: 'bind', b: 'motion', form: 'point', behavior: 'homing' })
+    M('月輪', RC(ST('bolt', { divide: 2 }, { path: 'return', matter: 'solid', look: 'chakram' }))),
+    M('鏡花', RC(ST('body', { phase: 2 }, { then: 'hit' }), ST('field', { divide: 1, motion: 1 }, { time: .5 }))),
+    M('水鏡', RC(ST('wall', { convert: 2, phase: 1 }))),
+    M('慣性の鎖', RC(ST('bolt', { bind: 2, motion: 1 }, { path: 'seek', force: 'pull' })))
   ] }
 ];
-// Botの持ち術（旧来の組。流派を持たない Bot が使う。はじめの容量4に収まる術を中心にしてある）
+// Botの持ち術（流派を持たない Bot が使う。はじめの容量4に収まる術を中心にしてある）
 DATA.botLoadouts = [
-  ['bolt', 'guided', 'wall', 'beam'],
-  ['spear', 'blink', 'harden', 'mend'],
-  ['bolt', 'poison', 'blades', 'guided'],
-  ['shock', 'well', 'solid', 'beam'],
-  ['shuriken', 'reflect', 'wall', 'haste'],
-  ['katana', 'guided', 'barrier', 'vital'],
-  ['spear', 'beam', 'barrier', 'blades'],
-  ['axe', 'chakram', 'bastion', 'guided'],
-  ['arrow', 'beam', 'castle', 'mend']
+  ['bolt', 'seeker', 'stoneWall', 'ray'],
+  ['lance', 'anchor', 'harden', 'mend'],
+  ['bolt', 'mine', 'bladeRing', 'seeker'],
+  ['shotgun', 'well', 'barrier', 'ray'],
+  ['chakram', 'drainWall', 'haste', 'burst'],
+  ['ghost', 'seeker', 'guardRing', 'mend'],
+  ['lance', 'ray', 'barrier', 'bladeRing'],
+  ['bolt', 'cluster', 'stoneWall', 'cloak']
 ];
 
 // ═══ 04. 光の色（術者・魔素・原理の色） ═══════════════════════
@@ -392,14 +327,14 @@ DATA.rooms = {
   dojo: { name: '修練場',   note: '人形を相手に、作った術を試す。記録は残らない', R: 1100, bots: 0, motes: 0, springs: 0, rocks: 3, practice: true }
 };
 DATA.roomOrder = ['ichi', 'sema', 'oo'];
-// 修練場の人形：止まる・左右に歩く・結界を張る（物性編壁で射線を切ってくる）
+// 修練場の人形：止まる・左右に歩く・壁を張る（石壁で射線を切ってくる）
 DATA.dummies = [
   { name: '人形・止', kind: 'still', ink: 'yellow', x: 420, y: -160, mass: 300 },
   { name: '人形・歩', kind: 'walk', ink: 'teal', x: 520, y: 140, mass: 150 },
-  { name: '人形・壁', kind: 'guard', ink: 'blue', x: 760, y: -20, mass: 500, spells: ['wall', 'wall', 'wall', 'wall'] },
+  { name: '人形・壁', kind: 'guard', ink: 'blue', x: 760, y: -20, mass: 500, spells: ['stoneWall', 'stoneWall', 'stoneWall', 'stoneWall'] },
   // 攻撃する人形（修練場の「攻撃人形」を入れたときだけ撃つ）。耐久と結界の試験に。every 秒ごとに持ち術を順に放つ
-  { name: '人形・射', kind: 'shooter', ink: 'orange', x: -560, y: -260, mass: 200, every: 1.1, spells: ['spear', 'bolt', 'katana', 'shuriken'] },
-  { name: '人形・砲', kind: 'cannon', ink: 'purple', x: -620, y: 260, mass: 400, every: 3.4, spells: ['beam', 'axe', 'beam', 'shock'] }
+  { name: '人形・射', kind: 'shooter', ink: 'orange', x: -560, y: -260, mass: 200, every: 1.1, spells: ['lance', 'bolt', 'seeker', 'shotgun'] },
+  { name: '人形・砲', kind: 'cannon', ink: 'purple', x: -620, y: 260, mass: 400, every: 3.4, spells: ['ray', 'burst', 'ray', 'anchor'] }
 ];
 
 // ═══ 07. 位階（端末に保存する累計ポイント） ════════════════════
@@ -443,30 +378,76 @@ DATA.cries = {
 // 自分の叫びの初期値（ロビーで書き換えられる）
 DATA.defaultCries = { win: '見たか、これが紋の力だ！', death: 'くっ…まだ散るわけには…！' };
 
+
 // ═══ 09. 遊び方 ════════════════════════════════════════════════
 DATA.howto = [
   ['動く', 'WASD / 矢印キー'],
   ['術を持ち替える', '1・2・3・4 / ホイール / 下の枠をクリック'],
   ['術を放つ', 'マウスで狙い、左クリック（押し続けると続けて詠唱）'],
   ['回避', '右クリック / Space'],
-  ['指示起爆', 'F（「発動：指示」の術に合図を送る）'],
-  ['回収', 'G（「糸：維持」の術をほどき、魔力の一部を戻す）'],
+  ['合図', 'F（「合図で」次の段へ移る術に合図を送る）'],
+  ['回収', 'G（糸でつながった術をほどき、魔力の一部を戻す）'],
   ['術式台', 'T（修練場の中、ロビー、散った後）'],
   ['音', 'M で効果音、N で音楽、V で声（なし／技名だけ／技名と叫び）、B で曲を変える。細かい設定はロビーの「設定」']
 ];
 DATA.rules = [
-  '術は「術式台」で組む。何が起こるか（原理）・どんな形か・どう届くか・いつ起こるか・起きた後どうなるか、を選ぶと、27の現象のどれかになる。',
-  '部品が増えるほど消費と詠唱が重くなり、威力も落ちる。部品の少ない単調な術ほど燃費が良く、一撃が重い。扱える部品の数（制御容量）はレベルで育つ：LV0で4、LV3で5、LV7で7、LV12で9。超えた術は放つ瞬間に暴発しうる。',
-  '術は「固体」か「エネルギー」で放つ。設置壁はどちらの質も光線も止め、壊した一撃も受け止める。領域型の結界は質の相性で削れる。固体を周回させると、刃が周りを回って盾にも武器にもなる。',
-  '放った術は遠くへ行くほど散って弱まる。光線と槍はほとんど衰えない。形（針・矢・刀・日本刀・大鎌・斧・槌・手裏剣・円月輪・槍・城…）で速さ・当たり判定・結界への貫通力が変わる。',
-  '「完全」の結界は固体とエネルギーを重ね、何も通さない。ただし消費が非常に重く、張っている間は魔力が減り続けて足が重くなり、術を唱えると解ける。',
-  '違う紋の術どうしは空中でぶつかる。固体どうしは衝突して弱い方が砕け、エネルギーどうしは相殺し合い、エネルギーが固体を貫くと大きく弱まり固体も削れる。炸裂の爆風は違う紋のエネルギーの弾を吹き消し、固体の弾を弾き飛ばす。光線は違う紋のエネルギーの弾を焼き払う。',
-  '自分の紋の術どうしは反発せず、重なり合う。エネルギーどうしは「融合」して大きな一発に、エネルギーが自分の固体の弾に触れると「魔装」して固体が重くなる。自分のエネルギーの場を通った弾や光線は「共鳴」して強まり、炸裂は近くの自分の罠を「誘爆」させる。自分の結界は自分の術を通す（壁越しに撃てる）。円月輪を受け止めると魔力が半分戻る。',
+  '術は「術式台」で組む。器（弾・線・面・円・纏・環）を選び、六原理に0〜3点を振る。原理は器そのものと、器に触れたものの両方に同じ規則で効く。',
+  '動は速くして押す、結は硬くしてつなぐ、分は鋭くして壊す、換は吸って奪う、増は数と時間を増やして自分を直す、相は見えなくして結を抜け、触れた相手に印を付ける。',
+  '段をつなぐと術が育つ。弾が触れたら円が開く、壁が壊れたら反撃する、合図（F）で起爆する。条件は「触れたら・尽きたら・合図で・壊れたら」。最大3段。',
+  '点を重ねるほど共鳴して強まる（1点=1、2点=2.2、3点=3.6）。単調な術ほど一つの作用が重く、混ぜた術は多芸になる。点・段のつなぎ・糸・追尾の合計が制御容量を使う：LV0で4、LV3で5、LV7で7、LV12で9。超えた術は放つ瞬間に暴発しうる。',
+  '器は「固体」か「エネルギー」。固体は遅く重く、エネルギーの構造を大きく削る。エネルギーは速いが固体の構造に弱い。光線はエネルギーの結界を砕く。設置壁は質に関係なく、誰の体も弾も光線も止め、壊した一撃も受け止める。',
+  '相の点が構造の結の点より多い弾・光線・体は、その壁や結界をすり抜ける。結を厚くすれば位相を止められる。岩は抜けられない。',
+  '違う紋の弾どうしは空中でぶつかる。固体どうしは衝突し、エネルギーどうしは相殺し、質が違えば貫き合って弱まる。結のある弾は競り合いに強く、換のある弾は相手の弾を吸う。自分の弾どうしは融合し、自分のエネルギーの場を通った弾は共鳴して強まる。',
   '戦場の床の六つの紋は「六原理の節点」。その輪の中に立つと、その原理を含む術の威力が上がり、消費が下がり、魔力の戻りも速くなる。中央の「要の陣」に立つと制御容量が1増える。',
   '作った術は「修練場」で人形を相手に試せる。修練場では T でいつでも組み替えられる。',
   '戦場では地面の光の粒（魔素）を拾うと育ち、魔力も戻る。魔力は勝手には戻らない（六原理の節点の中でだけ湧き出る）。魔素がそのままスコア。散らした相手の魔素は周りにばらまかれ、魔力も奪える。',
   '散ったら終わり。スコアと順位が位階ポイントになる。すぐ入りなおせる。'
 ];
+
+// 初心者向けの原理・器・条件の説明と、実際に試す手ほどき
+// principle：[器そのものに, 触れたものに, 気をつけること]。vessel / then：[何が起こる, 何に使える, 弱点]
+DATA.learning = {
+  parts: {
+    principle: {
+      motion:  ['器そのもの：速くなる。弾は速く、壁と円は照準の向きへ進み、環は速く回り、纏なら自分の足が速くなる。', '触れたもの：押す・引く・回す。弾で引けば相手を自分へ引き寄せる。', '打撃は分より軽い。押しすぎると相手が射程の外へ逃げる。'],
+      bind:    ['器そのもの：硬くなる。壁・環・円は耐久を持ち、結のある円は弾を止める結界になる。纏なら受ける打撃が減る。', '触れたもの：器の中心へつなぐ。弾なら術者へ、円なら中心へつなぎ、3点で足も止める。', '回避と距離でつながりは切れる。分の強い一撃で壁は崩れる。'],
+      divide:  ['器そのもの：鋭くなる。構造を削る力が増え、弾は点の数だけ体を貫く。纏なら鈍化や拘束をほどく。', '触れたもの：壊す。いちばん大きな打撃。2点以上で相手の糸も断つ。', '魔力の負荷が重い。固い壁には質と相の組み合わせが要る。'],
+      convert: ['器そのもの：受けた魔力を吸う。壁や環が止めた一撃、纏が受けた打撃の一部が自分の魔力に戻る。', '触れたもの：魔力を奪う。奪った分の6割が自分に戻る。', '打撃は増えない。魔力を奪っても相手の体は削れない。'],
+      grow:    ['器そのもの：数と時間が増える。弾・線は扇に増え、環は刃が増え、円は長く残り、壁は長くなる。纏なら体が再生する。', '触れたもの：自分の紋を直す。自分の場の中の自分の体や、自分の壁を直す。', '増えた1発は軽くなる（合計は増える）。相手には効かない。'],
+      phase:   ['器そのもの：見えず、結を抜ける。相の点が壁や結界の結の点より多いとすり抜ける。纏なら姿が消え、壁も抜ける。', '触れたもの：印を付ける。印の付いた相手は隠れられず、打撃が少し重くなる。', '近づく・詠唱する・打たれると姿が見える。岩は抜けられない。']
+    },
+    vessel: {
+      bolt:  ['照準へ飛ぶ魔力の塊。', '基本の攻撃。軌道（放物・追尾・回帰）や段で化ける。', '直進は横へ避けられる。壁に止まる。'],
+      ray:   ['一瞬で伸びる光。並んだ相手を貫く。', '遠くの相手、エネルギーの結界を砕く。', '詠唱と消費が重い。設置壁で止まる。'],
+      wall:  ['術者の正面に立つ壁。遠くに立てるなら、動を振るか、弾の後ろにつなぐ。', '射線を切る。動で押し出す壁、分で触れると痛い壁。', '自分の体と術も止める。分と固体に削られる。'],
+      field: ['足元に開く場。遠くに開くなら、弾や線の後ろにつなぐ。開いた瞬間に強く作用し、残る間は弱く作用する。', '範囲攻撃・罠・結界（結）・回復の場（増）。', '外へ出られると効かない。'],
+      body:  ['自分の体を器にする。', '加速・硬化・再生・隠れ身・体当たり。', '一つずつしか纏えない。遠くには届かない。'],
+      orbit: ['自分の周りを回る刃や城壁。', '飛んでくる弾を受け止め、近づく相手に作用する。', '遠くに届かない。刃は削られると砕ける。']
+    },
+    then: {
+      hit:    ['触れた所で次の段が開く。', '着弾で爆ぜる弾、踏むと起きる罠、打たれると反撃する纏。', '外れると次の段が開かない（弾は照準の地点で開く）。'],
+      end:    ['持続を使い切った所で次の段が開く。', '時間差の爆発、空中で分裂する弾、切れ目のない守り。', '相手が待ってくれるとは限らない。'],
+      signal: ['F の合図で次の段が開く。', '置いた罠を好きな時に起爆する。', '糸の維持費がかかり、遠すぎると切れる。'],
+      break:  ['器が壊された所で次の段が開く。', '壊されると反撃する壁や環。', '壊されなければ開かない。']
+    }
+  },
+  world: [
+    ['魔素と魔力', '地面の光の粒は魔素。取り込むと自分の紋を帯びた魔力になる。術を放つと魔力を使い、魔素を拾うか節点の輪に立つと補える。'],
+    ['紋と構造体', '紋は魔力の持ち主を示す。自分の攻撃で自分は傷つかないが、固定した壁は構造体なので自分の体・弾・光線も止める。'],
+    ['散逸と糸', '手を離れた術はやがてほどける。糸を維持すると誘導・合図・回収ができるが、維持費と距離の限界がある。'],
+    ['原理から現象へ', '炎や雷の属性を選ぶ世界ではない。六原理で魔素の動きや形を操作し、その結果が光・衝撃・結晶・結界として現れる。']
+  ],
+  tutorial: [
+    ['動と分：弾を放つ', '1の魔弾（動1・分1の弾）で正面の人形を狙い、2回放とう。PCはマウスで狙って左クリック、スマホは右側をタッチ。青い帯が魔力。練習中の術は保存した4つを変更しない。'],
+    ['結：面で防ぐ', '1を石壁（結3の面）に替えた。正面の人形との間を狙って壁を立て、弾を1回防ごう。自分の体と術も壁で止まる。WASD／左側の操作で壁の後ろへ動ける。'],
+    ['原理を足す', '術式台を開き、1の弾の「結」に1点以上振って決定。その弾を人形に当てよう。結は触れた相手を器の中心（弾なら自分）へつなぐ。'],
+    ['器を替える', '術式台で1の器を「環」に替えて決定し、放とう。同じ原理が、自分の周りを回る刃になる。器が替わっても原理の意味は変わらない。'],
+    ['分：壁を崩す', '正面の人形が壁を置いた。術式台で1の弾の「分」を2点以上にして撃とう。分は構造を削る。壊した一撃は壁で止まるので、もう一度撃てる。'],
+    ['段をつなぐ', '術式台で「段を足す」を押し、1の弾が「触れたら」2段目の円が開く術を作ろう。円にも原理を振って、動く人形に当てよう。'],
+    ['観察して、組み替えて、再戦する', '戦場では相手の術と射線を見る。壁には分や相を、追尾には横移動を、結界には光線や固体を試そう。魔力は魔素を拾うか節点で補う。術式の編集は修練場か入場前に行う。練習用の術はここで元に戻る。']
+  ],
+  example: '動だけの弾は速く押す。分を足せば壊し、結を足せば相手を自分へつなぐ。同じ原理の点を円に振れば範囲に、纏に振れば自分の体に宿る。弾が触れたら円を開く、と段をつなげば爆裂球。原理は「何をするか」、器と段は「どう使うか」を決める。'
+};
 
 (typeof window !== 'undefined' ? window : globalThis).PRIMA_DATA = DATA;
 })();

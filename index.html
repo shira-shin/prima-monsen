@@ -9,7 +9,7 @@
   <meta property="og:type" content="website">
   <meta property="og:title" content="PRIMA 紋戦 — 術を組み、乱戦で放て">
   <meta property="og:description" content="原理をつないで自分だけの魔法を組み、魔導士の乱戦で放つブラウザゲーム。登録不要・すぐ遊べる。">
-  <meta property="og:image" content="assets/duel-mages-v2.png">
+  <meta property="og:image" content="assets/prima-key-duel.png">
   <meta name="twitter:card" content="summary_large_image">
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%230d0b12'/%3E%3Ccircle cx='32' cy='32' r='24' fill='none' stroke='%23ece6d8' stroke-width='2'/%3E%3Cpath d='M32 10 51 43H13Z M32 54 13 21h38Z' fill='none' stroke='%23ff5fa2' stroke-width='2'/%3E%3Ccircle cx='32' cy='32' r='5' fill='%23ffd36a'/%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -88,7 +88,7 @@
       <button id="sfxBtn" type="button" class="tiny" title="効果音（M）">音</button>
       <button id="bgmBtn" type="button" class="tiny" title="音楽（N）">曲</button>
       <button id="voiceBtn" type="button" class="tiny" title="声（V）">声</button>
-      <button id="setBtn" type="button" class="tiny" title="設定">設</button>
+      <button id="setBtn" type="button" class="tiny wide" title="設定">設定</button>
       <button id="leaveBtn" type="button" class="tiny wide" title="ロビーへ戻る（Esc）">退出</button>
     </div>
 
@@ -105,11 +105,12 @@
       <header class="mast">
         <p class="mast-brand">PRIMA</p>
         <h1 class="mast-title">紋戦</h1>
-        <p class="mast-lede">原理を接続して術を組み、乱戦で放て。</p>
+        <p class="mast-lede">相手の術を読み、破る術を組み直せ。</p>
+        <p class="prima-lobby-lore">魔素に己の紋を刻み、術を編む。崩れた構造は魔素へ還り、次の術者の力となる。</p>
       </header>
 
       <div id="welcome" class="welcome" hidden>
-        <p><b>はじめての方へ</b>　修練場で、動き方・術の放ち方・術の組み方を実際にやってみる（3分ほど）。</p>
+        <p><b>はじめての方へ</b>　魔弾を放つ、壁で防ぐ、原理に点を振る、器を替える、段をつなぐ。修練場で魔法の仕組みを試そう。</p>
         <button id="tutorStart" type="button" class="join small">手ほどきを始める</button>
       </div>
 
@@ -143,6 +144,7 @@
         <button id="tutorLink" type="button" class="link">手ほどき</button>
         <button id="settingsBtn" type="button" class="link">設定（声・音・画面）</button>
       </nav>
+      <p class="note">まず術式台の作例から1つ選び、修練場で試す。戦場で相手の術を観察し、戻って組み替える。</p>
     </section>
 
     <div class="side">
@@ -214,37 +216,60 @@
       <header class="forge-head">
         <div>
           <h2 id="forgeTitle">術式台</h2>
-          <p>原理と部品を接続して、1〜4 の枠に術を組む。部品が増えるほど消費と詠唱が重くなり、制御容量を超えると暴発しうる。</p>
+          <p>作例を選ぶ → 器と原理の点を変える → 段をつなぐ → 修練場で試す。決定すると選んだ枠に保存され、1〜4で持ち替えて放てる。</p>
         </div>
         <button id="forgeClose" type="button" class="join small">決定 <small>Esc</small></button>
       </header>
       <div id="forgeSlots" class="forge-slots" role="tablist" aria-label="術の枠"></div>
+      <section class="prima-template-start">
+        <h3>作例から作る</h3>
+        <p>作例は完成した術のテンプレート。選ぶと今の枠だけに読み込み、自由に改造できる。</p>
+        <div id="fPresets" class="chips presets"></div>
+        <details><summary>ほかの作例も見る</summary><div id="fMorePresets" class="chips presets"></div></details>
+      </section>
+      <div class="prima-forge-mode">
+        <button id="forgeAdvanced" type="button" class="join small" aria-expanded="false">術式を拡張する</button>
+        <p id="forgeModeNote"></p>
+      </div>
+      <section class="prima-part-guide" aria-live="polite">
+        <h3 id="fHelpTitle"></h3>
+        <dl><dt>何が起こる？</dt><dd id="fHelpWhat"></dd><dt>何に使える？</dt><dd id="fHelpUse"></dd><dt>弱点は？</dt><dd id="fHelpWeak"></dd></dl>
+        <p id="fHelp" class="forge-help">部品にふれると、その意味がここに出る</p>
+      </section>
+      <p id="fChanges" class="forge-msg" aria-live="polite"></p>
+
       <div class="forge-grid">
         <div class="forge-board">
-          <div class="frow"><span class="num">1</span><span class="lab">何が起こる<small>主原理</small></span><div id="fA" class="chips"></div></div>
-          <div class="frow"><span class="num">2</span><span class="lab">もう一つの性質<small>副原理</small></span><div id="fB" class="chips"></div></div>
-          <div class="frow"><span class="num">3</span><span class="lab">形<small>広がり方</small></span><div id="fForm" class="chips"></div></div>
-          <div class="frow"><span class="num">4</span><span class="lab">どう届く<small>届き方</small></span><div id="fBeh" class="chips"></div></div>
-          <div class="frow"><span class="num">5</span><span class="lab">いつ起こる<small>発動</small></span><div id="fTrig" class="chips"></div></div>
-          <div class="frow"><span class="num">6</span><span class="lab">起きた後<small>追加機能</small></span><div id="fDep" class="chips"></div></div>
-          <div class="frow"><span class="num">7</span><span class="lab">放った後<small>糸</small></span><div id="fLink" class="chips"></div></div>
-          <div class="frow"><span class="num">8</span><span class="lab">上乗せ<small>追加性質</small></span><div class="exwrap"><div id="fEx" class="chips"></div><div id="fExList" class="exlist"></div></div></div>
-          <div class="frow sliders">
-            <span class="num">強</span><span class="lab">強弱</span>
+          <div class="prima-stagebar">
+            <div id="fStages" class="prima-stages" role="tablist" aria-label="段"></div>
+            <div class="prima-stage-tools">
+              <button id="fAddStage" type="button" class="chip plain"><span>＋ 段を足す</span></button>
+              <button id="fDelStage" type="button" class="chip plain"><span>この段を外す</span></button>
+              <button id="fNew" type="button" class="chip plain"><span>白紙から組む</span></button>
+            </div>
+            <p id="fStageNote" class="set-note"></p>
+          </div>
+          <div class="frow"><span class="num">器</span><span class="lab">何を作る<small>器</small></span><div id="fVessel" class="chips"></div></div>
+          <div id="fPathRow" class="frow"><span class="num">軌</span><span class="lab">どう飛ぶ<small>軌道（弾だけ）</small></span><div id="fPath" class="chips"></div></div>
+          <div class="frow prima-points-row"><span class="num">理</span><span class="lab">原理<small>0〜3点・重ねるほど強い</small></span><div id="fPoints" class="prima-points"></div></div>
+          <div id="fForceRow" class="frow"><span class="num">向</span><span class="lab">力の向き<small>動の点があるとき</small></span><div id="fForce" class="chips"></div></div>
+          <div id="fThenRow" class="frow"><span class="num">次</span><span class="lab">次の段へ<small>移る条件</small></span><div id="fThen" class="chips"></div></div>
+          <div class="frow prima-advanced"><span class="num">質</span><span class="lab">固めるか<small>固体／エネルギー</small></span><div id="fMatter" class="chips"></div></div>
+          <div class="frow sliders prima-advanced">
+            <span class="num">量</span><span class="lab">大きさ・持続</span>
             <div class="sl">
-              <label for="fPower">威力 <b id="fPowerV">100%</b></label><input id="fPower" type="range" min="0.7" max="1.6" step="0.05">
-              <label for="fDur">時限・持続 <b id="fDurV">100%</b></label><input id="fDur" type="range" min="0.6" max="2" step="0.1">
-              <label for="fRate">連射 <b id="fRateV">×1</b></label><input id="fRate" type="range" min="1" max="3" step="1">
-              <label for="fVelocity">飛翔速度 <b id="fVelocityV">100%</b></label><input id="fVelocity" type="range" min="0.5" max="2" step="0.1" aria-describedby="fVelocityNote">
-              <p id="fVelocityNote">弾が飛ぶ速さ。高速ほど消費魔力が増える。光線・自位置・周回は対象外。</p>
+              <label for="fSize">大きさ <b id="fSizeV">100%</b></label><input id="fSize" type="range" min="0.6" max="1.6" step="0.05">
+              <label for="fTime">持続 <b id="fTimeV">100%</b></label><input id="fTime" type="range" min="0.5" max="2" step="0.05">
+              <p id="fSlideNote"></p>
             </div>
           </div>
-          <div class="frow"><span class="num">質</span><span class="lab">固めるか<small>固体／エネルギー</small></span><div id="fMatter" class="chips"></div></div>
-          <div class="frow"><span class="num">形</span><span class="lab">刃の形<small>速さ・当たり・衰え</small></span><div id="fShape" class="chips"></div></div>
+          <div class="frow prima-advanced"><span class="num">糸</span><span class="lab">放った後<small>糸</small></span><div id="fLink" class="chips"></div></div>
+          <div id="fShapeRow" class="frow"><span class="num">形</span><span class="lab">見た目<small>性能は変わらない</small></span><div id="fShape" class="chips"></div></div>
         </div>
         <aside class="forge-result">
           <canvas id="forgePreview" width="340" height="180" aria-label="術の動きの見本"></canvas>
-          <label for="fName" class="fname-lab">名前 <small>空欄なら現象の名前。付けると放つときに唱える</small></label>
+          <p class="set-note">動きの模式図。実際の威力・射程・相性は修練場で確かめる。</p>
+          <label for="fName" class="fname-lab">名前 <small>空欄なら原理と器の名前。付けると放つときに唱える</small></label>
           <input id="fName" type="text" maxlength="20" placeholder="（自動）" autocomplete="off">
           <h3 id="fResName" class="res-name">魔弾針</h3>
           <p id="fSummary" class="res-summary"></p>
@@ -252,7 +277,7 @@
           <p id="fResDesc" class="res-desc"></p>
           <p id="fResTags" class="res-tags"></p>
           <dl class="forge-stats">
-            <div><dt>部品</dt><dd id="fParts">1</dd></div>
+            <div><dt>容量</dt><dd id="fParts">1</dd></div>
             <div><dt>魔力</dt><dd id="fCost">0</dd></div>
             <div><dt>詠唱</dt><dd id="fWind">0</dd></div>
             <div><dt>威力</dt><dd id="fPow">0</dd></div>
@@ -264,18 +289,19 @@
           <button id="fTry" type="button" class="join small">修練場で試す</button>
         </aside>
       </div>
-      <p id="fHelp" class="forge-help">部品にふれると、その意味がここに出る</p>
+      <details class="prima-master-examples">
+        <summary>達人の術・流派から学ぶ</summary>
+        <p>達人の術は今の枠だけ、流派は4つの枠すべてを置き換える。点と段が多い術は、初期の制御容量では暴発しやすい。</p>
       <div class="forge-foot">
         <span class="lab">達人の流派<small>Bot が修める4つの術を丸ごと読み込む</small></span>
         <div id="fSchools" class="chips presets"></div>
         <span class="lab">達人の術</span>
         <div id="fMasters" class="chips presets"></div>
-        <span class="lab">作例</span>
-        <div id="fPresets" class="chips presets"></div>
         <div class="foot-links">
           <button id="fReset" type="button" class="link">初期の4つに戻す</button>
         </div>
       </div>
+      </details>
     </section>
   </div>
 
@@ -283,10 +309,20 @@
   <div id="how" class="how" hidden>
     <section class="sheet how-sheet" role="dialog" aria-labelledby="howTitle">
       <h2 id="howTitle">遊び方</h2>
-      <ul id="howRules" class="how-rules"></ul>
+      <p>相手の術を読み、破る術を組み直せ。</p>
+      <h3>最初の一歩</h3>
+      <p>まず術式台の作例から1つ選び、修練場で試す。戦場で相手の術を観察し、戻って組み替える。</p>
+      <h3>術の放ち方</h3>
+      <p>PCはWASDで移動、マウスで照準、左クリックで詠唱。1〜4か下の枠で術を持ち替える。スマホは左側で移動、右側で照準と詠唱。押し続けると連続して放つ。</p>
       <table class="how-keys"><tbody id="howKeys"></tbody></table>
-      <h3>六原理（単一原理で放つと）</h3>
+      <h3>魔素から魔法が生まれる</h3>
+      <div id="howWorld" class="prima-world-guide"></div>
+      <h3>六原理の役割</h3>
       <ul id="howPrinciples" class="how-principles"></ul>
+      <h3>原理をつなぎ、使い方を変える</h3>
+      <p id="howExample"></p>
+      <details><summary>戦場のルールを詳しく読む</summary><ul id="howRules" class="how-rules"></ul></details>
+      <button id="howTutor" class="join small" type="button">魔法の手ほどきを始める</button>
       <button id="howClose" class="join" type="button">閉じる</button>
     </section>
   </div>
@@ -295,13 +331,16 @@
   <div id="settings" class="settings" hidden>
     <section class="sheet settings-sheet" role="dialog" aria-labelledby="settingsTitle">
       <h2 id="settingsTitle">設定</h2>
+      <p class="set-note">変更はすぐ反映され、このブラウザに保存される。音が出ないときは、消音と音量の両方を確認する。</p>
       <div class="set-group">
         <label class="set-lab" for="setLang">言語 <small>Language</small></label>
         <select id="setLang"></select>
+        <p class="set-note">言語を変えると画面を読み込み直す。戦場ではロビーへ戻ってから変更しよう。</p>
       </div>
       <div class="set-group">
         <label class="set-lab" for="setQuality">画質</label>
         <select id="setQuality"></select>
+        <p class="set-note">動きが重いときは「軽い」を選ぶ。術の演算や強さは変わらず、光と粒の描画を減らす。</p>
       </div>
       <div class="set-group">
         <span class="set-lab">声</span>
@@ -321,10 +360,12 @@
         <p id="setVoiceNote" class="set-note">「Natural」「Online」と付いた声がいちばん人に近い（Edge・Chrome で使える）。</p>
       </div>
       <div class="set-group">
+        <label class="set-check"><input id="setSfxOn" type="checkbox"> 効果音を鳴らす</label>
         <label class="set-lab" for="setSfxVol">効果音 <b id="setSfxV">80</b></label>
         <input id="setSfxVol" type="range" min="0" max="1" step="0.05">
       </div>
       <div class="set-group">
+        <label class="set-check"><input id="setBgmOn" type="checkbox"> 音楽を鳴らす</label>
         <label class="set-lab" for="setBgmVol">音楽 <b id="setBgmV">55</b></label>
         <div class="set-line">
           <input id="setBgmVol" type="range" min="0" max="1" step="0.05">

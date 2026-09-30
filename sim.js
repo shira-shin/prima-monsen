@@ -2,13 +2,13 @@
 // DOM・Canvas・音・実時間を持たない。step(world, dt) で進むだけ。
 // ブラウザでは data.js の後に読み込み、window.PRIMA_SIM として公開する。
 // 将来のオンライン対戦ではこのファイルをサーバー側でもそのまま動かす（docs/ONLINE_RELEASE.md）。
-// 術式の組み方・消費・詠唱・部品数・暴発・27現象の効き方は旧版（dist/classic/game.js）に合わせてある。
+// 術は「器 × 原理 × 段の連鎖」（docs/SPELLCRAFT.md）。原理は器そのものと、器に触れたものへ同じ規則で効く。
 //
 // ─── 目次（═══ NN. で検索） ───
 // 01. 乱数と小道具   02. 世界の生成（修練場の人形を含む）   03. 術者（体・能力値）   04. レベルと制御容量
-// 05. 魔素（地面の粒）   06. 術式計算（正規化・部品数・消費・詠唱・暴発）
-// 07. 詠唱と発動   08. 飛ぶ術式・罠・投射・光線   09. 起動（追加機能）と現象
-// 10. 領域・結界・囮   11. 糸（維持費・切断・誘導・指示起爆・回収）   12. 命中
+// 05. 魔素（地面の粒）   06. 術式計算（正規化・容量・消費・詠唱・暴発・名前）
+// 07. 詠唱と発動（段を開く・次の段へ移る）   08. 器：弾・線   09. 器：面・円・纏・環
+// 10. 場・壁・纏の更新   11. 糸（維持費・切断・誘導・合図・回収）   12. 触れる（原理が相手に効く）と打撃
 // 13. 撃破と再参加   14. 1フレームの更新   15. Botの思考   16. 順位   17. 公開
 (() => {
 const ROOT = typeof window !== 'undefined' ? window : globalThis;
@@ -88,11 +88,15 @@ function makeUnit(w, o) {
     spells: [0, 1, 2, 3].map(i => normRecipe((o.spells || D.defaultSpells)[i] || D.defaultSpells[i])),
     sel: 0, casting: null, queue: null, slotCd: [0, 0, 0, 0],
     cries: o.cries || { win: '', death: '' },
-    dodgeCd: 0, dashT: 0, phaseT: 0, shield: 0, reflectT: 0, hasteT: 0, hardenT: 0, vitalT: 0,
-    rootT: 0, slowT: 0, slowAmt: 0, poisonT: 0, poisonDps: 0, poisonBy: 0, markT: 0,
+    // 纏（body）の効き目は毎フレーム場から書き込まれる。hasteT などは描画用の印
+    dodgeCd: 0, dashT: 0, phaseT: 0, hasteT: 0, hardenT: 0, vitalT: 0, impactT: 0,
+    bodyT: 0, bodyZone: 0, bodyMotion: 0, bodyArmor: 0, bodyConvert: 0, bodyPhase: 0, cloakT: 0, cloak: 0, revealT: 0,
+    // 結でつながれた先：tetherTo が術者なら術者の位置、0 なら (tetherX, tetherY)
+    tetherT: 0, tetherX: 0, tetherY: 0, tetherTo: 0, tetherLength: 0, tetherForce: 0, tetherPull: 0, tetherBreak: 0, tetherOwner: 0,
+    rootT: 0, slowT: 0, slowAmt: 0, markT: 0, markLv: 0,
     spawnShield: W.spawnShield, combatT: 99, lastHitBy: null, lastHitT: -99,
     kills: 0, bornT: w.t, place: 0, bestPlace: 99, hurtT: 0, dummy: o.dummy || null, dealt: 0, taken: 0, blocked: 0,
-    aegis: false, every: o.every || 0, fireT: 1, fireI: 0, node: -1, center: false,
+    every: o.every || 0, fireT: 1, fireI: 0, node: -1, center: false,
     input: { mx: 0, my: 0, aim: 0, tx: 0, ty: 0, cast: false, slot: 0, dodge: false, detonate: false, recall: false },
     brain: o.bot ? makeBrain(w, o.school) : null
   };
@@ -189,13 +193,13 @@ function refreshBody(u) {
 }
 const speedOf = u => Math.max(W.body.minSpeed, W.body.speed - Math.sqrt(Math.max(0, u.mass)) * W.body.speedPerSqrt);
 const maxMp = u => W.mp.max + u.level * W.mp.perLevel;
-// 制御容量：旧版は職業ごと（巫女4・前衛5・術者7・観測9）。乱戦ではレベルで育つ
-// 立っている節点が、この術の原理（主・副・追加性質）と同じか
+// 立っている節点の原理が、この術のどれかの段に振られているか
 function nodeBoost(w, u, r) {
   if (!u || u.node < 0 || !w.nodes[u.node]) return false;
   const k = w.nodes[u.node].k;
-  return r.a === k || r.b === k || r.extras.includes(k);
+  return r.stages.some(s => s.p[k] > 0);
 }
+// 制御容量：レベルで育つ（原理の点・段のつなぎ・糸・追尾の合計まで暴発しない）
 function capacityOf(u) {
   let c = 0;
   for (const [lv, n] of R.capacity) if ((u ? u.level : 0) >= lv) c = n;
@@ -340,160 +344,187 @@ function updateMotes(w, dt) {
   if (eaten) w.motes = w.motes.filter(m => !m.eaten);
 }
 
-// ═══ 06. 術式計算（旧版と同じ式） ═══════════════════════════════
-// レシピ = { a, b, form, behavior, trigger, deploy, link, extras[], power, duration, rate, visualShape, customName }
-const RAPID_OK = ['project', 'homing', 'lob', 'sow', 'relay', 'beam'];
-const VISUAL_SHAPES = Object.keys(D.visualShapes);
-const PR = k => D.principles[k] || D.noPrinciple;
+// ═══ 06. 術式計算（器 × 原理 × 段） ═════════════════════════════
+// レシピ = { v: 3, stages: [{ vessel, path, matter, force, size, time, look, then, p: { motion, bind, divide, convert, grow, phase } }], link, customName }
+// 原理は一つの動詞。器そのもの（self）と、器に触れたもの（touch）へ同じ規則で効く（data.js の principles）
+const C = D.craft;
+const PR = k => D.principles[k];
+const VESSELS = C.vesselOrder, PATHS = C.pathOrder, FORCES = C.forceOrder;
+const LOOKS = ['auto', ...D.shapeOrder];
 const cleanName = v => String(v || '').trim().slice(0, 20);
-function normRecipe(r) {
-  const o = { a: 'motion', b: 'none', form: 'point', behavior: 'project', trigger: 'contact', deploy: 'single', link: 'cut', visualShape: 'auto', power: 1, duration: 1, rate: 1, ...(r || {}) };
-  if (!D.principles[o.a]) o.a = 'motion';
-  if (o.b !== 'none' && !D.principles[o.b]) o.b = o.a;
-  if (!D.forms[o.form]) o.form = 'point';
-  if (!D.behaviors[o.behavior]) o.behavior = 'project';
-  if (!D.triggers[o.trigger]) o.trigger = 'contact';
-  if (!D.deploys[o.deploy]) o.deploy = 'single';
-  if (!D.links[o.link]) o.link = 'cut';
-  if (!VISUAL_SHAPES.includes(o.visualShape)) o.visualShape = 'auto';
-  o.extras = (Array.isArray(o.extras) ? o.extras : []).filter(k => D.principles[k]).slice(0, R.maxExtras);
-  o.power = clamp(Number(o.power) || 1, R.power[0], R.power[1]);
-  o.duration = clamp(Number(o.duration) || 1, R.duration[0], R.duration[1]);
-  o.rate = clamp(Math.round(Number(o.rate) || 1), R.rate[0], R.rate[1]);
-  // 飛翔速度は部品に数えない。瞬時の光線・自位置・周回には適用しない。
-  o.velocity = Number.isFinite(Number(o.velocity)) ? clamp(Number(o.velocity), ...R.velocity) : 1;
-  if (!['project', 'homing', 'lob', 'sow', 'relay'].includes(o.behavior)) o.velocity = 1;
-  if (o.behavior === 'orbit') { o.trigger = 'contact'; if (!['linger', 'siphon'].includes(o.deploy)) o.deploy = 'single'; }
-  if (o.behavior === 'beam') { o.form = 'line'; o.trigger = 'contact'; o.deploy = 'single'; }
-  if (!RAPID_OK.includes(o.behavior)) o.rate = 1;
-  // 指示起爆は糸を通してしか届かない（④ 糸）。光線は一瞬で終わるので糸を持てない
-  if (o.trigger === 'command') o.link = 'hold';
-  if (o.behavior === 'beam') o.link = 'cut';
-  // 質：省いたら、結を含む術は固体・ほかはエネルギー（周回はエネルギーの膜）。光線は光なので常にエネルギー
-  if (!D.matters[o.matter]) o.matter = o.behavior !== 'orbit' && (o.a === 'bind' || o.b === 'bind') ? 'solid' : 'energy';
-  if (o.behavior === 'beam') o.matter = 'energy';
-  if (o.matter === 'perfect' && !perfectOk(o)) o.matter = o.a === 'bind' || o.b === 'bind' ? 'solid' : 'energy';
+const echo = lv => C.echo[lv] || 0;
+const numIn = (v, [lo, hi], def) => { const n = Number(v); return v === undefined || v === null || v === '' || !Number.isFinite(n) ? def : clamp(n, lo, hi); };
+function normStage(s) {
+  const o = s && typeof s === 'object' ? s : {};
+  const vessel = VESSELS.includes(o.vessel) ? o.vessel : 'bolt';
+  const p = {};
+  for (const k of P) p[k] = clamp(Math.round(Number(o.p && o.p[k]) || 0), 0, C.maxLevel);
+  let then = C.thensFor[vessel].includes(o.then) ? o.then : 'hit';
+  // 結の無い円は壊れない（硬さを持たない）
+  if (then === 'break' && vessel === 'field' && !p.bind) then = 'end';
   return {
-    a: o.a, b: o.b, form: o.form, behavior: o.behavior, trigger: o.trigger, deploy: o.deploy, link: o.link, extras: o.extras,
-    power: o.power, duration: o.duration, rate: o.rate, velocity: o.velocity, matter: o.matter, visualShape: o.visualShape, customName: cleanName(o.customName || o.name)
+    vessel,
+    path: vessel === 'bolt' && PATHS.includes(o.path) ? o.path : 'straight',
+    // 光線と自分の体はエネルギーのまま
+    matter: vessel === 'ray' || vessel === 'body' ? 'energy' : o.matter === 'solid' ? 'solid' : 'energy',
+    force: FORCES.includes(o.force) ? o.force : 'push',
+    size: vessel === 'body' ? 1 : numIn(o.size, C.size, 1),
+    time: vessel === 'ray' ? 1 : numIn(o.time, C.time, 1),
+    look: (vessel === 'bolt' || vessel === 'orbit') && LOOKS.includes(o.look) ? o.look : 'auto',
+    then, p
   };
 }
-const pairKey = r => r.b === 'none' ? `${r.a}|none` : [r.a, r.b].sort().join('|');
-// 完全（固体とエネルギーを重ねた結界）を使える術：結界を作る現象か、周回（強化術は除く）
-const WARD_TYPES = ['solid', 'wall', 'trench', 'root', 'prison', 'bulwark', 'shift', 'counter'];
-function perfectOk(r) {
-  if (r.behavior === 'orbit') return !(r.b === 'none' && ['motion', 'bind', 'grow'].includes(r.a));
-  const p = D.pairData[pairKey(r)];
-  return !!p && WARD_TYPES.includes(p.type);
+// 旧方式（27現象の weave: 1、配分の weave: 2）の保存を、近い一段の術へ置き換える
+function fromLegacy(o) {
+  const p = {};
+  const add = (k, n) => { if (PR(k)) p[k] = Math.min(C.maxLevel, (p[k] || 0) + n); };
+  const b = o.b && o.b !== 'none' ? o.b : null;
+  add(o.a || 'motion', b === o.a ? 2 : 1);
+  if (b && b !== o.a) add(b, 1);
+  if (o.weave === 2 && !b) add(o.a, 1);
+  for (const k of Array.isArray(o.extras) ? o.extras : []) add(k, 1);
+  // はじめの制御容量に収める
+  for (let guard = 0; guard < 12 && Object.values(p).reduce((a, n) => a + n, 0) > 4; guard++) {
+    const top = Object.keys(p).sort((x, y) => p[y] - p[x])[0]; p[top]--;
+  }
+  let vessel = 'bolt';
+  if (o.behavior === 'beam') vessel = 'ray';
+  else if (o.weave === 2) vessel = o.target === 'self' ? 'body' : o.target === 'construct' ? (o.anchor === 'fixed' ? 'wall' : 'orbit') : o.target === 'field' ? 'field' : 'bolt';
+  else if (o.behavior === 'orbit') vessel = o.matter === 'solid' ? 'orbit' : b ? 'field' : 'body';
+  else if (['plane', 'line'].includes(o.form) && (o.a === 'bind' || b === 'bind')) vessel = 'wall';
+  else if (['ring', 'field'].includes(o.form) && ['lob', 'drop', 'sow'].includes(o.behavior)) vessel = 'field';
+  const path = vessel !== 'bolt' ? 'straight' : o.behavior === 'homing' ? 'seek' : o.behavior === 'lob' ? 'arc' : 'straight';
+  return { v: 3, customName: o.customName || o.name, link: o.link === 'hold' && vessel !== 'ray',
+    stages: [{ vessel, path, matter: o.matter === 'solid' ? 'solid' : 'energy', look: o.visualShape, p }] };
 }
-// 部品数：既定値（弾・射出・接触・単発・切断）から外れた選択と、原理・追加性質の数
+function normRecipe(r) {
+  let o = r && typeof r === 'object' ? r : {};
+  if (o.v !== 3) o = fromLegacy(o);
+  const src = Array.isArray(o.stages) && o.stages.length ? o.stages.slice(0, C.maxStages) : [{}];
+  const stages = src.map(normStage);
+  // 合図で移る段があれば、糸が要る（④ 糸）
+  const link = !!o.link || stages.slice(0, -1).some(s => s.then === 'signal');
+  return { v: 3, stages, link, customName: cleanName(o.customName || o.name) };
+}
+// 制御容量に数える量：原理の点の合計 ＋ 段のつなぎ ＋ 糸 ＋ 追尾の軌道
 function partCount(r) {
-  return 1 + (r.b !== 'none' ? 1 : 0) + (r.form !== 'point' ? 1 : 0) + (r.behavior !== 'project' ? 1 : 0)
-    + (r.trigger !== 'contact' ? 1 : 0) + (r.deploy !== 'single' ? 1 : 0) + (r.link === 'hold' ? 1 : 0) + r.extras.length;
+  let n = r.stages.length - 1 + (r.link ? 1 : 0);
+  for (const s of r.stages) { for (const k of P) n += s.p[k]; n += C.paths[s.path].parts; }
+  return n;
 }
-// 複雑度倍率：freeParts を超えた部品数に応じて消費が割高になる
-function complexityMul(r) {
-  const C = R.complexity, over = Math.max(0, partCount(r) - C.freeParts);
-  return 1 + C.perPart * Math.pow(over, C.exponent);
-}
-// 暴発率：制御容量を超えた部品1つごとに上がる
+// 暴発率：制御容量を超えた点1つごとに上がる
 function misfireChance(r, u) {
   const over = partCount(r) - capacityOf(u);
   return over > 0 ? Math.min(R.misfire.max, over * R.misfire.perOverPart) : 0;
 }
-const extrasCount = (r, k) => r.extras.filter(x => x === k).length;
-const visualShapeOf = r => r.visualShape !== 'auto' ? r.visualShape : r.form === 'point' ? 'needle' : r.form === 'line' ? 'shard' : 'orb';
-const shapeOf = r => D.shapes[visualShapeOf(r)] || D.shapes.needle;
-const matterOf = r => D.matters[r.matter] || D.matters.energy;
-// 純度：部品が少ない単調な術ほど一撃が重く、複雑な術ほど威力が落ちる
-function purityMul(r) {
-  const P = R.purity, n = partCount(r);
-  return n <= P.base ? 1 + P.bonus * (P.base - n) : Math.max(P.min, 1 - P.penalty * (n - P.base));
-}
-// 遠くでの衰え：放った術は離れるほど散る（③ 散逸）。光線と槍はほとんど衰えない。固体は衰えにくい
-function falloffMul(r, dist) {
-  const k = (D.behaviors[r.behavior].falloff || 0) * matterOf(r).fall * shapeOf(r).fall;
-  return Math.max(R.falloff.min, 1 - k * dist / R.falloff.per);
-}
+// 点の多い順（同じなら原理の順）
+const topKeys = p => P.filter(k => p[k] > 0).sort((x, y) => p[y] - p[x] || P.indexOf(x) - P.indexOf(y));
 function mixHex(a, b) {
   const pa = parseInt(a.slice(1), 16), pb = parseInt(b.slice(1), 16);
   return '#' + [((pa >> 16) + (pb >> 16)) >> 1, (((pa >> 8) & 255) + ((pb >> 8) & 255)) >> 1, ((pa & 255) + (pb & 255)) >> 1].map(v => v.toString(16).padStart(2, '0')).join('');
 }
 const inkHex = k => (D.inks[PR(k).ink] || D.inks.yellow).hex;
-// 名前と現象：組み合わせ表から引き、広がり方の字を付ける（旧版と同じ）
-function recipeResult(r) {
-  const base = D.pairData[pairKey(r)] || { base: PR(r.a).name + PR(r.b).name, type: 'hybrid', desc: '未分類の現象。', tags: ['複合'], power: 58, control: 58, terrain: 58 };
-  const fm = D.forms[r.form], N = D.naming;
-  // 名前の組み立て方は言語ごとに data の naming が決める（日本語は「魔弾」＋「針」、英語は「Arcane Bolt」＋「 Needle」）
-  const suffix = r.form === 'point' ? (N.shapeSuffix[visualShapeOf(r)] || fm.suffix) : fm.suffix;
-  const strip = N.beamStrip && base.base.endsWith(N.beamStrip) ? base.base.slice(0, -N.beamStrip.length) : base.base;
-  const core = r.behavior === 'beam' ? N.beam.replace('{0}', strip) : (base.base.endsWith(suffix) ? base.base : base.base + N.join + suffix);
-  const extras = r.extras.map(k => PR(k).kanji).join('');
+function colorOf(st) {
+  const ks = topKeys(st.p);
+  return !ks.length ? '#d9cfbd' : ks.length === 1 ? inkHex(ks[0]) : mixHex(inkHex(ks[0]), inkHex(ks[1]));
+}
+// 見た目の形：選んでいなければ器と原理から決める（性能は変わらない）
+function shapeFor(st) {
+  if (st.look !== 'auto') return st.look;
+  if (st.vessel === 'orbit') return 'blade';
+  if (st.vessel !== 'bolt') return 'orb';
+  if (st.matter === 'solid') return st.p.divide >= 2 ? 'spear' : 'shard';
+  return st.p.motion >= 2 ? 'arrow' : st.p.grow ? 'shard' : 'needle';
+}
+// 描画と音のための見かけ（主な原理 a・次の原理 b・広がり・届き方・発動の印）
+const FORM_OF = { bolt: 'point', ray: 'line', wall: 'plane', field: 'ring', body: 'point', orbit: 'ring' };
+const BEH_OF = { straight: 'project', arc: 'lob', seek: 'homing', return: 'project' };
+function lookOf(rec, si) {
+  const st = rec.stages[si], ks = topKeys(st.p), next = si + 1 < rec.stages.length;
   return {
-    ...base, name: extras ? `${core}${N.extraSep}${extras}` : core,
-    color: r.b === 'none' ? inkHex(r.a) : mixHex(inkHex(r.a), inkHex(r.b)),
-    power: Math.round(base.power * fm.power), control: Math.round(base.control * fm.control), terrain: Math.round(base.terrain * fm.terrain)
+    v: 3, a: ks[0] || 'motion', b: ks[1] || 'none', form: FORM_OF[st.vessel],
+    behavior: st.vessel === 'bolt' ? BEH_OF[st.path] : st.vessel === 'ray' ? 'beam' : st.vessel === 'body' || st.vessel === 'orbit' ? 'orbit' : 'drop',
+    trigger: next && st.then === 'signal' ? 'command' : next && st.then === 'end' ? 'fuse' : 'contact',
+    deploy: 'single', matter: st.matter, visualShape: shapeFor(st), duration: st.time, power: 1, link: rec.link ? 'hold' : 'cut'
   };
+}
+const visualShapeOf = (r, si = 0) => shapeFor(r.stages[si]);
+// 名前：段ごとに「原理の字＋器の字」。点の多い原理から並べる（例：分動弾・分円）
+const resultCache = new WeakMap();
+function recipeResult(r) {
+  if (resultCache.has(r)) return resultCache.get(r);
+  const N = C.naming;
+  const names = r.stages.map(s => { const ks = topKeys(s.p); return (ks.length ? ks.map(k => PR(k).short || PR(k).kanji).join(N.join) : N.empty) + N.join + C.vessels[s.vessel].name; });
+  const s0 = r.stages[0];
+  const res = { name: names.join(N.stageSep), base: names[0], type: s0.vessel, desc: C.vessels[s0.vessel].note, color: colorOf(s0),
+    tags: [...new Set(r.stages.flatMap(s => topKeys(s.p).map(k => PR(k).name)))] };
+  resultCache.set(r, res);
+  return res;
 }
 const spellName = r => r.customName || recipeResult(r).name;
-function baseCost(r) {
-  const effect = recipeResult(r);
-  // 原理を強く保つ分、効果の威力・制圧力・地形操作にも魔素が要る
-  const force = Math.ceil((effect.power * .55 + effect.control * .28 + effect.terrain * .17) / 12);
-  const complexity = (r.b !== 'none' && r.a !== r.b ? 2 : 0) + (r.behavior === 'beam' ? 5 : 0) + (r.deploy === 'linger' && r.form === 'field' ? 4 : 0);
-  const extras = r.extras.reduce((s, k) => s + PR(k).cost * .8, 0);
-  let sum = PR(r.a).cost + PR(r.b).cost + D.forms[r.form].cost + D.behaviors[r.behavior].cost
-    + D.triggers[r.trigger].cost + D.deploys[r.deploy].cost + D.links[r.link].cost + extras + force + complexity;
-  // 形（刀・槍など）を作る手間と、固体にする手間
-  sum += shapeOf(r).cost;
-  sum *= matterOf(r).cost;
-  sum *= complexityMul(r);
-  // 単調な術ほど燃費が良い
-  sum *= 1 - R.purity.costCut * Math.max(0, R.purity.base - partCount(r));
-  sum *= Math.pow(r.power, 1.6);
-  sum *= 1 + R.velocityCost * Math.max(0, (r.velocity || 1) ** 2 - 1);
-  if (r.trigger === 'fuse') sum *= clamp(1.5 - r.duration * .5, .8, 1.3);
-  else if (['linger', 'siphon'].includes(r.deploy) || r.behavior === 'orbit') sum *= clamp(.7 + r.duration * .3, .7, 1.6);
-  return sum;
+// 魔力の消費：器の負荷 ＋ 原理の負荷 × 点^1.35、大きさ・持続・質で変わる。2段目からは少し軽い
+const SIZE_COST = { bolt: s => .75 + .25 * s, ray: s => .6 + .4 * s, wall: s => .5 + .5 * s, field: s => .35 + .65 * s * s, orbit: s => .6 + .4 * s, body: () => 1 };
+const TIME_COST = { bolt: t => .85 + .15 * t, ray: () => 1, wall: t => .7 + .3 * t, field: t => .6 + .4 * t, orbit: t => .6 + .4 * t, body: t => .55 + .45 * t };
+function stageCost(s, i) {
+  let c = C.vessels[s.vessel].cost + C.paths[s.path].cost;
+  for (const k of P) if (s.p[k]) c += PR(k).cost * Math.pow(s.p[k], 1.35);
+  c *= SIZE_COST[s.vessel](s.size) * TIME_COST[s.vessel](s.time) * (s.matter === 'solid' ? C.solidCost : 1);
+  return c * (i > 0 ? C.later : 1);
 }
-function rawCost(r) {
-  let cost = Math.ceil(baseCost(r));
-  if (RAPID_OK.includes(r.behavior) && r.rate > 1) cost = Math.ceil(cost * (1 + (r.rate - 1) * .78));
-  return cost;
-}
-function recipeCost(r, u) {
-  return Math.max(1, Math.round(rawCost(r) * R.costScale));
-}
+function baseCost(r) { return r.stages.reduce((n, s, i) => n + stageCost(s, i), 0) + (r.link ? C.linkCost : 0); }
+function recipeCost(r) { return Math.max(1, Math.round(baseCost(r) * C.costScale)); }
 function windupTime(r) {
-  const C = R.complexity;
-  const core = clamp(.16 + baseCost(r) / complexityMul(r) * .0195 * D.forms[r.form].wind * D.behaviors[r.behavior].wind, .18, 1.35);
-  return Math.min(C.maxWind, core + C.windPerPart * Math.max(0, partCount(r) - C.freeParts)) * R.windScale;
+  const Wd = C.wind;
+  return clamp(Wd.base + baseCost(r) * Wd.perCost, Wd.min, Wd.max) + Wd.perStage * (r.stages.length - 1);
 }
+// 命中1回の打撃（器の倍率を掛ける前）：素の魔力（違う紋が触れて構造を乱す）＋分は壊し、動は運動量で打つ。
+// 壁は素の魔力では打たない（原理の無い壁に触れても痛くない）
+const touchPower = st => (st.vessel === 'wall' ? 0 : C.dmg.base) + C.dmg.divide * echo(st.p.divide) + C.dmg.motion * echo(st.p.motion);
+// 魔素の多い体ほど少し重い
+const unitDmg = u => 1 + Math.sqrt(Math.max(0, u ? u.mass : 0)) * C.dmg.perSqrt;
+// 遠くでの衰え：弾は散りやすく（固体は衰えにくい）、光線はほとんど衰えない（③ 散逸）
+function falloffMul(st, dist) {
+  const k = st.vessel === 'ray' ? C.ray.fall : st.vessel === 'bolt' ? C.bolt.fall * (st.matter === 'solid' ? .6 : 1.2) : 0;
+  return Math.max(R.falloff.min, 1 - k * dist / R.falloff.per);
+}
+const VESSEL_MUL = { bolt: 1, ray: C.ray.mul, wall: C.wall.touch, field: C.field.burst, body: C.body.bump, orbit: C.orbit.touch };
 // 画面に出す術の要約
 function spellInfo(u, r) {
-  const res = recipeResult(r);
+  const res = recipeResult(r), s0 = r.stages[0];
   return {
-    name: spellName(r), result: res, parts: partCount(r), cap: capacityOf(u), cost: recipeCost(r, u), windup: windupTime(r), misfire: misfireChance(r, u), color: res.color, type: res.type,
-    // 威力の目安：命中1回の基本威力（魔素0）、純度の倍率、800 先での残り
-    power: hitBase(null, r, res) * (D.behaviors[r.behavior].hitMul || 1), purity: purityMul(r), reach: falloffMul(r, 800)
+    name: spellName(r), result: res, parts: partCount(r), cap: capacityOf(u), cost: recipeCost(r), windup: windupTime(r), misfire: misfireChance(r, u), color: res.color, type: res.type,
+    // 威力の目安：1段目の一撃（弾・線は増の複製の合計）。遠く（800先）で残る割合
+    power: touchPower(s0) * VESSEL_MUL[s0.vessel] * (['bolt', 'ray'].includes(s0.vessel) ? Math.sqrt(C.copies[s0.p.grow]) : 1),
+    reach: falloffMul(s0, 800)
   };
+}
+// 隠密は無敵ではない。近距離・詠唱・被弾・観測（印）で姿が分かる
+function visibleTo(observer, u) {
+  if (!u) return false;
+  if (!observer || observer.id === u.id || u.revealT > 0 || u.markT > 0 || u.casting) return true;
+  const strength = u.cloakT > 0 ? u.cloak : 0;
+  return strength <= 0 || hyp(observer.x - u.x, observer.y - u.y) < 90 + (1 - strength) * 500;
+}
+// 相のある術（弾・壁・場）は、持ち主以外には近づくまで見えない
+function visibleSpell(observer, o) {
+  if (!o || !o.veil || !observer || observer.id === o.owner) return true;
+  return hyp(observer.x - o.x, observer.y - o.y) < Math.max(C.veil.min, C.veil.range - C.veil.perLevel * o.veil);
 }
 
 // ═══ 07. 詠唱と発動 ═════════════════════════════════════════════
 // 詠唱を始める（魔力は先払い）。詠唱が終わると放たれる
 function beginCast(w, u, slot) {
-  if (u.casting || u.queue || u.dashT > 0) return false;
-  // 完全の結界を張っている間は術を唱えられない。唱えようとすると結界が解ける
-  if (u.aegis) { dispelPerfect(w, u, 'cast'); return false; }
+  if (u.casting || u.dashT > 0) return false;
   const r = u.spells[slot];
   if (!r || u.slotCd[slot] > 0) return false;
-  const cost = Math.max(1, Math.round(recipeCost(r, u) * (nodeBoost(w, u, r) ? W.node.cost : 1)));
+  const cost = Math.max(1, Math.round(recipeCost(r) * (nodeBoost(w, u, r) ? W.node.cost : 1)));
   if (u.mp < cost) return false;
   u.mp -= cost;
+  u.revealT = Math.max(u.revealT, 1.4);
   u.spawnShield = 0;
-  const total = windupTime(r);
+  const total = windupTime(r), look = lookOf(r, 0);
   u.casting = { slot, t: 0, total, cost };
-  w.events.push({ type: 'chant', id: u.id, slot, name: spellName(r), named: !!r.customName, a: r.a, b: r.b, beh: r.behavior, form: r.form, deploy: r.deploy, parts: partCount(r), t: total, col: recipeResult(r).color });
+  w.events.push({ type: 'chant', id: u.id, slot, name: spellName(r), named: !!r.customName, a: look.a, b: look.b, beh: look.behavior, form: look.form, deploy: 'single', parts: partCount(r), stages: r.stages.length, t: total, col: recipeResult(r).color });
   return true;
 }
 function release(w, u) {
@@ -504,113 +535,95 @@ function release(w, u) {
   // 制御容量を超えた術式は、放つ瞬間に崩れて自分を傷つけることがある（② 構造体）
   if (w.rng() < misfireChance(r, u)) {
     w.events.push({ type: 'misfire', id: u.id, x: u.x, y: u.y, ink: u.ink, name: spellName(r) });
-    damage(w, u, rawCost(r) * R.misfire.selfDamage, null);
+    damage(w, u, baseCost(r) * R.misfire.selfDamage, null);
     return;
   }
   fire(w, u, r, c.cost);
-  if (r.rate > 1) u.queue = { slot: c.slot, left: r.rate - 1, t: R.rapidGap, cost: c.cost };
 }
-function reachPoint(u, tx, ty, reach) {
-  const dx = tx - u.x, dy = ty - u.y, d = hyp(dx, dy);
-  if (d <= reach || d === 0) return { x: tx, y: ty };
-  return { x: u.x + dx / d * reach, y: u.y + dy / d * reach };
-}
-// 命中の基本威力：旧版の (8 + 現象の威力 × 0.085) × 強弱。大きな体ほど少し重い
-// 単調な術ほど重く（純度）、形でも少し変わる
-function hitBase(u, r, res) {
-  return (W.hit.base + res.power * W.hit.perPower) * r.power * (1 + Math.sqrt(Math.max(0, u ? u.mass : 0)) * W.hit.perSqrt)
-    * (1 + .08 * extrasCount(r, 'divide')) * purityMul(r) * shapeOf(r).dmg;
-}
+// 放つ：1段目を術者から開く。後の段は、前の段が条件を満たした場所から開く
 function fire(w, u, r, cost) {
-  const res = recipeResult(r), fm = D.forms[r.form], bh = D.behaviors[r.behavior];
-  const hold = r.link === 'hold';
-  const boost = nodeBoost(w, u, r);
-  const common = { owner: u.id, col: res.color, r, res, dmg: hitBase(u, r, res) * (boost ? W.node.power : 1), radius: fm.radius * (r.deploy === 'burst' ? 1.5 : 1), hold, linked: hold, cost, matter: r.matter, cast: w.nextId++ };
-  const aim = u.aim, ix = u.input;
-  w.events.push({ type: 'cast', id: u.id, name: spellName(r), named: !!r.customName, a: r.a, b: r.b, power: r.power, shape: visualShapeOf(r), beh: r.behavior, form: r.form, x: u.x, y: u.y, ink: u.ink, col: res.color, aim, rtype: res.type, matter: r.matter, node: boost });
-  // 位相化：放った直後の攻撃をすり抜ける
-  if (res.type === 'veil') u.phaseT = Math.max(u.phaseT, 0.6 * r.duration);
-  // 強化術：単一原理を周回で放つと、自分の紋の魔力を体へ直接書き込む（旧版の加速・硬化・活性）
-  if (r.behavior === 'orbit' && r.b === 'none' && ['motion', 'bind', 'grow'].includes(r.a)) {
-    const t = 4.5 * r.duration;
-    if (r.a === 'motion') u.hasteT = Math.max(u.hasteT, t);
-    if (r.a === 'bind') u.hardenT = Math.max(u.hardenT, t);
-    if (r.a === 'grow') u.vitalT = Math.max(u.vitalT, t);
-    w.events.push({ type: 'buff', id: u.id, kind: r.a, x: u.x, y: u.y, col: res.color });
-    return;
-  }
-  // 固体の周回：魔力を結晶の刃にして周りを回らせる。固体の弾を受け止め、触れた相手を斬る（盾にも武器にもなる）
-  if (r.behavior === 'orbit' && (r.matter === 'solid' || (r.matter === 'perfect' && !['bulwark', 'shift', 'counter'].includes(res.type)))) { spawnOrbiters(w, u, common); return; }
-  switch (r.behavior) {
-    case 'project': case 'homing': {
-      const s = spawnFlyer(w, u, common, aim, bh, r.behavior === 'homing');
-      if (r.trigger === 'fuse' || (r.trigger === 'contact' && STRUCTURE.includes(res.type))) s.stopAt = Math.min(bh.range, hyp(ix.tx - u.x, ix.ty - u.y));
-      break;
-    }
-    case 'relay':
-      for (const k of [-1, 0, 1]) spawnFlyer(w, u, { ...common, dmg: common.dmg * 0.62 }, aim + k * 0.22, bh, false);
-      break;
-    case 'lob': {
-      const p = reachPoint(u, ix.tx, ix.ty, bh.range), d = hyp(p.x - u.x, p.y - u.y);
-      w.spells.push({ ...common, id: w.nextId++, kind: 'lob', state: 'fly', sx: u.x, sy: u.y, x: u.x, y: u.y, tx: p.x, ty: p.y, t: 0, dur: Math.max(0.25, d / (bh.speed * r.velocity)), age: 0, wait: 0, fuseT: R.fuse * r.duration, shape: visualShapeOf(r), hit: [], vx: p.x - u.x, vy: p.y - u.y });
-      break;
-    }
-    case 'sow': {
-      const p = reachPoint(u, ix.tx, ix.ty, bh.range);
-      const s = spawnFlyer(w, u, common, Math.atan2(p.y - u.y, p.x - u.x), bh, false);
-      s.stopAt = hyp(p.x - u.x, p.y - u.y); s.rolling = true;
-      break;
-    }
-    case 'drop':
-      if (r.trigger === 'contact') activate(w, { ...common, x: u.x, y: u.y, vx: Math.cos(aim), vy: Math.sin(aim), kind: 'drop' }, u.x, u.y, null);
-      else w.spells.push({ ...common, id: w.nextId++, kind: 'trap', state: 'wait', x: u.x, y: u.y, vx: Math.cos(aim), vy: Math.sin(aim), age: 0, wait: 0, fuseT: R.fuse * r.duration, shape: visualShapeOf(r), hit: [] });
-      break;
-    case 'orbit':
-      // 周回：術者に追従する領域。結界系は弾を止め、ほかは周りに作用し続ける
-      spawnZone(w, { ...common, x: u.x, y: u.y, vx: Math.cos(aim), vy: Math.sin(aim) }, 'orbit', common.radius * 0.7, 3.2 * r.duration * (r.deploy === 'linger' ? 1.4 : 1) * (r.matter === 'perfect' ? 2 : 1));
-      break;
-    case 'beam':
-      fireBeam(w, u, common, aim, bh.range, 12 * fm.radius / 58);
-      break;
-  }
+  u.revealT = Math.max(u.revealT, 1.4);
+  const res = recipeResult(r), look = lookOf(r, 0), s0 = r.stages[0];
+  const k = { owner: u.id, rec: r, cast: w.nextId++, linked: r.link, cost, boost: nodeBoost(w, u, r) ? W.node.power : 1, unit: unitDmg(u) };
+  w.events.push({ type: 'cast', id: u.id, name: spellName(r), named: !!r.customName, a: look.a, b: look.b, power: 1, shape: look.visualShape, beh: look.behavior, form: look.form,
+    x: u.x, y: u.y, ink: u.ink, col: res.color, aim: u.aim, rtype: s0.vessel, matter: s0.matter, node: k.boost > 1, stages: r.stages.length });
+  spawnStage(w, k, 0, { x: u.x, y: u.y, dir: u.aim, tx: u.input.tx, ty: u.input.ty }, 1);
 }
-
-// ═══ 08. 飛ぶ術式・罠・投射・光線 ═══════════════════════════════
-// 飛ぶ術式はすべて同じ項目で作る（passed：貫いた結界、bounce：跳ね返れる回数、t / life / ang / orad / hp / hitT は周回の刃だけが使う）
-function spawnFlyer(w, u, common, a, bh, homing) {
-  const sh = shapeOf(common.r), mt = matterOf(common.r);
-  const speed = bh.speed * (common.res.type === 'bolt' ? 1.1 : 1) * sh.speed * mt.speed * common.r.velocity;
-  const s = {
-    ...common, id: w.nextId++, kind: 'proj', state: 'fly',
-    x: u.x + Math.cos(a) * (u.r + 4), y: u.y + Math.sin(a) * (u.r + 4),
-    vx: Math.cos(a) * speed + u.vx * 0.25, vy: Math.sin(a) * speed + u.vy * 0.25, speed,
-    range: bh.range * sh.range, traveled: 0, age: 0, wait: 0, fuseT: R.fuse * common.r.duration, homing, tgt: null, retarget: 0,
-    size: (6 + Math.min(4.5, Math.sqrt(Math.max(0, u.mass)) * 0.07)) * (common.r.form === 'line' ? 1.6 : common.r.form === 'point' ? 1 : 1.3) * sh.size,
-    pierce: (['rend', 'void'].includes(common.res.type) && common.r.form === 'line' ? 3 : 0) + sh.pierce, hit: [], shape: visualShapeOf(common.r),
-    passed: [], bounce: sh.bounce, t: 0, life: 0, ang: 0, orad: 0, hp: 0, hitT: 0,
-    wardMul: sh.ward, returns: sh.returns, back: false, spin: 0, orbMul: 0
+// 段を開く。k は詠唱ごとの共通（持ち主・レシピ・糸・消費・魔素の重さ）、at は開く場所と向き
+function spawnStage(w, k, si, at, mul) {
+  const owner = unitById(w, k.owner);
+  if (!owner || !owner.alive) return;
+  const st = k.rec.stages[si];
+  // 2段目からは、糸があれば今の照準へ、無ければ前の段の向きへ開く
+  if (si > 0) {
+    const aim = k.linked ? { x: owner.input.tx, y: owner.input.ty } : { x: at.x + Math.cos(at.dir) * 320, y: at.y + Math.sin(at.dir) * 320 };
+    if (hyp(aim.x - at.x, aim.y - at.y) > 1) at.dir = Math.atan2(aim.y - at.y, aim.x - at.x);
+    at.tx = aim.x; at.ty = aim.y;
+  }
+  const base = {
+    owner: k.owner, rec: k.rec, si, st, look: lookOf(k.rec, si), col: colorOf(st), mul, unit: k.unit, boost: k.boost,
+    dmg: k.unit * k.boost * mul, cost: k.cost / k.rec.stages.length, hold: k.linked, linked: k.linked, matter: st.matter, cast: k.cast,
+    veil: st.p.phase, bindLv: st.p.bind, advanced: false, grp: null, k
   };
-  w.spells.push(s);
-  return s;
-}
-// 周回の刃：固体の周回。広がり方と形で本数・大きさ・回る速さが決まり、術者のまわりを回り続ける（城は城壁になって囲む）
-function spawnOrbiters(w, u, common) {
-  const r = common.r, O = R.orbiter, sh = shapeOf(r), so = sh.orbit;
-  const n = Math.max(1, Math.round((O.count[r.form] || 3) * so.count)), size = 12 * so.size * Math.sqrt(sh.size);
-  const orad = u.r + O.radius[r.form] + size * 0.4;
-  const life = O.life * r.duration * (r.deploy === 'linger' ? 1.5 : 1);
-  for (let i = 0; i < n; i++) {
-    const ang = u.aim + i / n * TAU;
-    w.spells.push({
-      ...common, cost: common.cost / n, id: w.nextId++, kind: 'orbiter', state: 'orbit',
-      x: u.x + Math.cos(ang) * orad, y: u.y + Math.sin(ang) * orad, vx: 0, vy: 0, speed: 0,
-      range: 0, traveled: 0, age: 0, wait: 0, fuseT: 0, homing: false, tgt: null, retarget: 0,
-      size, pierce: 0, hit: [], shape: visualShapeOf(r),
-      passed: [], bounce: 0, t: 0, life, ang, orad, hp: O.hp * r.power * so.hp, hitT: O.hitCd,
-      wardMul: sh.ward, returns: false, back: false, spin: O.spin * so.spin, orbMul: O.mul * so.mul
-    });
+  switch (st.vessel) {
+    case 'bolt': spawnBolts(w, owner, base, at); break;
+    case 'ray': fireRays(w, owner, base, at); break;
+    case 'wall': spawnWall(w, owner, base, at); break;
+    case 'field': spawnField(w, owner, base, at); break;
+    case 'body': spawnBody(w, owner, base); break;
+    case 'orbit': spawnOrbit(w, owner, base); break;
   }
-  w.events.push({ type: 'zone', id: 0, kind: 'blades', x: u.x, y: u.y, r: orad, col: common.col, rtype: common.res.type, owner: u.id });
+}
+// 次の段へ移る。移った段は役目を終えて消える。一つの器（環の刃の群れなど）からは一度だけ
+function advance(w, o, x, y, dir, cond) {
+  if (o.si + 1 >= o.rec.stages.length || o.st.then !== cond) return false;
+  const g = o.grp || o;
+  if (g.advanced) return false;
+  g.advanced = true;
+  const next = o.rec.stages[o.si + 1];
+  w.events.push({ type: 'activate', x, y, r: next.vessel === 'field' ? C.field.radius * next.size : 40, col: colorOf(next), rtype: next.vessel, a: lookOf(o.rec, o.si + 1).a,
+    b: lookOf(o.rec, o.si + 1).b, deploy: 'single', form: FORM_OF[next.vessel], owner: o.owner, matter: next.matter, cond });
+  spawnStage(w, o.k, o.si + 1, { x, y, dir }, o.mul);
+  consume(w, o);
+  return true;
+}
+// 器を消す（刃の群れは群れごと）
+function consume(w, o) {
+  if (o.grp) { for (const s of w.spells) if (s.grp === o.grp) s.done = true; return; }
+  if (o.low !== undefined) { o.hp = 0; o.broken = true; }
+  else if (o.zr !== undefined) o.dead = true;
+  else o.done = true;
+}
+const hasNext = o => o.si + 1 < o.rec.stages.length;
+
+// ═══ 08. 器：弾・線 ═════════════════════════════════════════════
+// 弾はすべて同じ項目で作る（あとから項目を足すと遅くなる）
+function spawnBolts(w, owner, base, at) {
+  const st = base.st, n = C.copies[st.p.grow], m = 1 / Math.sqrt(n);
+  const speed = C.bolt.speed * (1 + C.bolt.motionSpeed * echo(st.p.motion)) * (st.matter === 'solid' ? .85 : 1.08);
+  const range = C.vessels.bolt.range * st.time;
+  const first = base.si === 0;
+  const ox = first ? owner.x : at.x, oy = first ? owner.y : at.y;
+  const aimD = hyp(at.tx - ox, at.ty - oy);
+  // 照準の地点で次の段を開く弾（触れたら・合図で）は、そこで止まる
+  const stops = hasNext(base) && (st.then === 'hit' || st.then === 'signal');
+  const size = (C.bolt.size + Math.min(4.5, Math.sqrt(Math.max(0, owner.mass)) * 0.07)) * st.size;
+  for (let i = 0; i < n; i++) {
+    const a = at.dir + (i - (n - 1) / 2) * C.spread;
+    // r は描画用の見かけ（届き方・発動の印・持続）。radius は着地点の予告の大きさ
+    const common = { ...base, r: base.look, radius: 34 * st.size, mul: base.mul * m, dmg: base.dmg * m, id: w.nextId++, hit: [], passed: [], shape: shapeFor(st), size };
+    if (st.path === 'arc') {
+      const d = clamp(aimD, 60, 600 * st.time), tx = ox + Math.cos(a) * d, ty = oy + Math.sin(a) * d;
+      w.spells.push({ ...common, kind: 'lob', state: 'fly', sx: ox, sy: oy, x: ox, y: oy, tx, ty, t: 0, dur: Math.max(.25, d / (speed * .8)), age: 0, wait: 0, fuseT: 0, severT: R.link.severedLife,
+        vx: tx - ox, vy: ty - oy, speed, range: d, traveled: 0, homing: false, tgt: null, retarget: 0, pierce: 0, stopAt: Infinity, returns: false, back: false, life: 0, ang: 0, orad: 0, hp: 0, hitT: 0, spin: 0 });
+      continue;
+    }
+    const sx = first ? ox + Math.cos(a) * (owner.r + 4) : ox, sy = first ? oy + Math.sin(a) * (owner.r + 4) : oy;
+    w.spells.push({ ...common, kind: 'proj', state: 'fly', sx, sy, x: sx, y: sy, tx: at.tx, ty: at.ty, t: 0, dur: 0, age: 0, wait: 0, fuseT: 0, severT: R.link.severedLife,
+      vx: Math.cos(a) * speed + (first ? owner.vx * .25 : 0), vy: Math.sin(a) * speed + (first ? owner.vy * .25 : 0), speed, range, traveled: 0,
+      homing: st.path === 'seek', tgt: null, retarget: 0, pierce: st.p.divide, stopAt: stops ? Math.min(range, Math.max(40, aimD)) : Infinity,
+      returns: st.path === 'return', back: false, life: 0, ang: 0, orad: 0, hp: 0, hitT: 0, spin: 0 });
+  }
 }
 // 点と線分の距離
 function segDist(px, py, ax, ay, bx, by) {
@@ -618,44 +631,7 @@ function segDist(px, py, ax, ay, bx, by) {
   const t = L2 > 0 ? clamp(((px - ax) * dx + (py - ay) * dy) / L2, 0, 1) : 0;
   return hyp(ax + dx * t - px, ay + dy * t - py);
 }
-function tickOrbiter(w, s, owner, dt) {
-  if (!owner || !owner.alive) { s.done = true; return; }
-  s.t += dt * (s.linked ? R.link.decayMul : 1);
-  if (s.t > s.life || s.hp <= 0) { s.done = true; w.events.push({ type: s.hp <= 0 ? 'wardBreak' : 'fizzle', x: s.x, y: s.y, col: s.col, r: 14 }); return; }
-  s.ang += s.spin * dt;
-  const nx = owner.x + Math.cos(s.ang) * s.orad, ny = owner.y + Math.sin(s.ang) * s.orad;
-  if (dt > 0) { s.vx = (nx - s.x) / dt; s.vy = (ny - s.y) / dt; }
-  s.x = nx; s.y = ny;
-  s.hitT -= dt;
-  if (s.hitT <= 0) { s.hit.length = 0; s.hitT = R.orbiter.hitCd; }
-  const C = R.clash;
-  // 飛んでくる術式：固体どうしはぶつかって砕け合い、エネルギーは刃を貫いていく
-  for (const o of w.spells) {
-    if (o.done || o.kind !== 'proj' || o.state !== 'fly' || o.owner === s.owner || o.passed.includes(s.id)) continue;
-    // 速い弾がすり抜けないよう、この1フレームに進んだ線分で調べる
-    if (segDist(s.x, s.y, o.x - o.vx * dt, o.y - o.vy * dt, o.x, o.y) > s.size + o.size) continue;
-    // 完全の刃はエネルギーも通さず、削れもしない
-    if (o.matter === 'energy' && s.matter !== 'perfect') {
-      o.passed.push(s.id); s.hp -= o.dmg * C.pierceWard; o.dmg *= C.pierceKeep;
-      w.events.push({ type: 'pierce', x: s.x, y: s.y, col: o.col });
-      continue;
-    }
-    if (s.matter !== 'perfect') s.hp -= o.dmg * o.wardMul;
-    o.done = true; owner.blocked++;
-    w.events.push({ type: 'clash', x: (o.x + s.x) / 2, y: (o.y + s.y) / 2, col: s.col, col2: o.col, perfect: s.matter === 'perfect' });
-  }
-  // 違う紋のエネルギーの結界に触れると、少しずつ剥がしていく
-  const z = barrierAt(w, s.x, s.y, s.owner);
-  if (z && z.matter === 'energy' && s.matter !== 'energy') { hurtZone(w, z, s.dmg * C.strip * dt); if (s.hitT === R.orbiter.hitCd) w.events.push({ type: 'strip', x: s.x, y: s.y, col: s.col }); }
-  // 触れた相手を斬る（同じ相手は hitCd ごとに一度）
-  for (const u of w.units) {
-    if (!u.alive || u.id === s.owner || u.dashT > 0 || s.hit.includes(u.id)) continue;
-    if (hyp(u.x - s.x, u.y - s.y) > u.r + s.size) continue;
-    s.hit.push(u.id);
-    hitFoe(w, s, owner, u, s.orbMul, u.x - owner.x, u.y - owner.y);
-  }
-}
-// 自律追尾：自分と違う紋の、大きく近い魔力へ曲がる。散魔の囮に引かれる（① 紋）
+// 自律追尾：自分と違う紋の、大きく近い魔力へ曲がる。印の付いた相手を好む。囮に引かれる（① 紋）
 function homingTarget(w, s) {
   let best = null, bs = 0;
   const heading = Math.atan2(s.vy, s.vx);
@@ -665,33 +641,45 @@ function homingTarget(w, s) {
     const sc = weight / (d + 180);
     if (sc > bs) { bs = sc; best = obj; }
   };
-  for (const u of w.units) if (u.alive && u.id !== s.owner) consider(u.x, u.y, Math.sqrt(u.mass + 30) + 4, { unit: u.id });
+  for (const u of w.units) if (u.alive && u.id !== s.owner && visibleTo(s, u)) consider(u.x, u.y, (Math.sqrt(u.mass + 30) + 4) * (u.markT > 0 ? 1.8 : 1), { unit: u.id });
   for (const d of w.decoys) if (d.owner !== s.owner) consider(d.x, d.y, Math.sqrt(R.decoy.weight) + 6, { decoy: d.id });
   return best;
 }
+// 結のある結界（円）。相の点が結の点より多い術は抜ける
 function barrierAt(w, x, y, owner, skip) {
   for (const z of w.zones) if (z.barrier && !z.dead && z.owner !== owner && hyp(z.x - x, z.y - y) < z.zr && !(skip && skip.includes(z.id))) return z;
   return null;
 }
-// 共鳴：自分の紋の場（残留・周回・結界・吸魔・生体転写・魔素収束のエネルギーの場）を通った術は強まる。場ごとに一度
+// 共鳴：自分の紋のエネルギーの場を通った弾は強まる。場ごとに一度
 function resonate(w, s) {
-  if (s.kind !== 'proj') return;
   for (const z of w.zones) {
-    if (z.owner !== s.owner || z.dead || z.matter === 'solid' || s.passed.includes(z.id) || hyp(z.x - s.x, z.y - s.y) > z.zr) continue;
-    s.passed.push(z.id); s.dmg *= R.resonance;
+    if (z.owner !== s.owner || z.dead || z.kind !== 'field' || z.barrier || s.passed.includes(z.id) || hyp(z.x - s.x, z.y - s.y) > z.zr) continue;
+    s.passed.push(z.id);
+    // 換の場は吸う側。共鳴はエネルギーの場だけ
+    if (z.matter === 'solid') continue;
+    s.dmg *= C.resonance;
     w.events.push({ type: 'resonate', x: s.x, y: s.y, col: z.col, col2: s.col, owner: s.owner });
   }
+  // 違う紋の換の場を通ると、弾の魔力が吸われる
+  for (const z of w.zones) {
+    if (z.owner === s.owner || z.dead || z.kind !== 'field' || !z.st.p.convert || s.passed.includes(z.id) || hyp(z.x - s.x, z.y - s.y) > z.zr) continue;
+    s.passed.push(z.id);
+    const cut = Math.min(.6, .15 * echo(z.st.p.convert)), zo = unitById(w, z.owner);
+    if (zo) zo.mp = Math.min(maxMp(zo), zo.mp + s.dmg * touchPower(s.st) * cut * .5);
+    s.dmg *= 1 - cut;
+    w.events.push({ type: 'absorb', x: s.x, y: s.y, col: z.col, kind: 'drain' });
+  }
 }
-// 干渉：飛んでいる術式どうしが接触したときの反応（① 紋）
-//  違う紋（紋が反発し合う）
-//   固体どうし       → 衝突。弱い方が砕け、強い方も削れる。ほぼ互角なら両方砕ける
-//   エネルギーどうし → 相殺。打ち消し合い、弱い方が消え、強い方も弱まる
-//   固体とエネルギー → 貫通と減衰。エネルギーは固体を貫くが大きく弱まり、固体は熱で削れる
-//  同じ紋（同じ型の魔力は反発せず、重なり合う）
-//   エネルギーどうし → 融合。一つの大きな弾になる（威力を足し合わせる）
-//   エネルギーが固体に触れる → 魔装。エネルギーが固体に宿り、固体の弾が重くなる
-//   固体どうし       → すり抜ける（どちらも形を保つ）
-//  同じ詠唱から出た弾（扇射・分裂の小片・連射）どうしは干渉しない
+// 干渉：飛んでいる弾どうしが接触したときの反応（① 紋）
+//  違う紋：固体どうしは衝突、エネルギーどうしは相殺（結は競り合いに強い）。質が違えば貫き合って弱まる。
+//          換のある弾は、競り勝った相手の弾を吸って魔力に変える。壊れた弾は「壊れたら」の段を開く
+//  同じ紋：エネルギーどうしは融合、エネルギーが固体に触れると魔装。固体どうしはすり抜ける
+//  同じ詠唱から出た弾（増の複製）どうしは干渉しない
+const clashPower = s => s.dmg * touchPower(s.st) * (1 + .6 * echo(s.st.p.bind));
+function breakBolt(w, s) {
+  s.done = true;
+  advance(w, s, s.x, s.y, Math.atan2(s.vy, s.vx), 'break');
+}
 function interfere(w, dt) {
   const fly = [];
   for (const s of w.spells) if (!s.done && s.kind === 'proj' && s.state === 'fly') fly.push(s);
@@ -703,8 +691,9 @@ function interfere(w, dt) {
       if (a.done) break;
       if (b.done || a.cast === b.cast || a.passed.includes(b.id) || b.passed.includes(a.id)) continue;
       const same = a.owner === b.owner;
-      // 同じ紋で重なり合うのは、触れて起動する弾だけ（罠・時限・指示の術式は形を保つ）
-      if (same && (a.frag || b.frag || a.rolling || b.rolling || a.r.trigger !== 'contact' || b.r.trigger !== 'contact' || (a.matter === 'solid' && b.matter === 'solid'))) continue;
+      if (same && (a.matter === 'solid' && b.matter === 'solid' || hasNext(a) || hasNext(b))) continue;
+      // 相の点が相手の結より多い弾は、ぶつからずにすり抜ける
+      if (!same && (a.veil > b.bindLv || b.veil > a.bindLv)) continue;
       // この1フレームで最も近づいた距離（向かい合って速く飛ぶ弾もすり抜けない）
       const rx = a.x - b.x, ry = a.y - b.y, vx = a.vx - b.vx, vy = a.vy - b.vy, v2 = vx * vx + vy * vy;
       const t = v2 > 0 ? clamp(-(rx * vx + ry * vy) / v2, -dt, 0) : 0;
@@ -712,12 +701,10 @@ function interfere(w, dt) {
       const x = (a.x + b.x) / 2, y = (a.y + b.y) / 2;
       if (same) {
         if (a.matter === b.matter) {
-          // 融合：強い方が弱い方を取り込み、大きくなる
           const [big, small] = a.dmg >= b.dmg ? [a, b] : [b, a];
           big.dmg += small.dmg * I.fusion; big.size = Math.min(big.size * 1.3, 26); small.done = true;
           w.events.push({ type: 'fuse', x, y, col: big.col, col2: small.col, owner: a.owner });
         } else {
-          // 魔装：エネルギーが固体の弾に宿る
           const [sol, en] = a.matter === 'solid' ? [a, b] : [b, a];
           sol.dmg += en.dmg * I.enchant; sol.col = en.col; en.done = true;
           w.events.push({ type: 'enchant', x, y, col: en.col, col2: sol.col, owner: a.owner });
@@ -725,19 +712,25 @@ function interfere(w, dt) {
         continue;
       }
       if (a.matter !== b.matter) {
-        // 貫通と減衰：互いに一度だけ
         const [sol, en] = a.matter === 'solid' ? [a, b] : [b, a];
         const heat = en.dmg * I.melt;
-        en.dmg *= R.clash.pierceKeep; sol.dmg = Math.max(0, sol.dmg - heat);
+        en.dmg *= I.pierceKeep; sol.dmg = Math.max(0, sol.dmg - heat);
         a.passed.push(b.id); b.passed.push(a.id);
-        if (sol.dmg < 1) sol.done = true;
+        if (sol.dmg < .05) breakBolt(w, sol);
         w.events.push({ type: 'pierce', x, y, col: en.col, col2: sol.col, bolt: true });
         continue;
       }
-      const pa = a.dmg * (a.matter === 'solid' ? a.wardMul : 1), pb = b.dmg * (b.matter === 'solid' ? b.wardMul : 1);
+      const pa = clashPower(a), pb = clashPower(b);
       const [strong, weak, ps, pw] = pa >= pb ? [a, b, pa, pb] : [b, a, pb, pa];
-      weak.done = true;
-      if (ps - pw < ps * 0.15) strong.done = true;   // ほぼ互角なら両方とも消える
+      breakBolt(w, weak);
+      // 換のある弾は相手の弾を吸う（削られずに魔力へ）
+      if (strong.st.p.convert) {
+        const so = unitById(w, strong.owner);
+        if (so) so.mp = Math.min(maxMp(so), so.mp + pw * C.absorb * echo(strong.st.p.convert) * .3);
+        w.events.push({ type: 'absorb', x, y, col: strong.col, kind: 'drain' });
+        continue;
+      }
+      if (ps - pw < ps * 0.15) breakBolt(w, strong);   // ほぼ互角なら両方とも消える
       else strong.dmg *= 1 - pw / ps * (a.matter === 'solid' ? I.solidLoss : I.energyLoss);
       w.events.push({ type: a.matter === 'solid' ? 'clash' : 'cancel', x, y, col: a.col, col2: b.col });
     }
@@ -759,11 +752,11 @@ function tickSpell(w, s, dt) {
     s.t += dt;
     const f = Math.min(1, s.t / s.dur);
     s.x = s.sx + (s.tx - s.sx) * f; s.y = s.sy + (s.ty - s.sy) * f;
-    if (f >= 1) arrive(w, s);
+    if (f >= 1) boltLand(w, s, true);
     return;
   }
   if (s.state === 'fly') {
-    // 追尾：糸を維持していれば照準へ誘導、切れていれば自律で狙う（④ 糸）
+    // 追尾：糸があれば照準へ誘導、無ければ自律で狙う（④ 糸）
     if (s.homing) {
       let tx = null, ty = null, turn = 2.4;
       if (s.linked && owner && owner.alive) { tx = owner.input.tx; ty = owner.input.ty; turn = R.link.guideTurn; }
@@ -779,7 +772,7 @@ function tickSpell(w, s, dt) {
         s.vx = Math.cos(na) * sp; s.vy = Math.sin(na) * sp;
       }
     }
-    // 円月輪：射程の半分で折り返し、術者の手元へ戻る（帰りにも当たる）
+    // 回帰：射程の半分で折り返し、術者の手元へ戻る（帰りにも当たる）
     if (s.returns && !s.back && s.traveled >= s.range * 0.5) { s.back = true; s.hit.length = 0; s.homing = false; w.events.push({ type: 'ricochet', x: s.x, y: s.y, col: s.col }); }
     if (s.back) {
       if (!owner || !owner.alive) { s.done = true; return; }
@@ -794,410 +787,207 @@ function tickSpell(w, s, dt) {
         return;
       }
     }
-    // 細い壁や高速の槍を飛び越さないよう、移動中も接触を調べる。
+    // 細い壁や速い弾を飛び越さないよう、移動中も接触を調べる
     const steps = Math.max(1, Math.ceil(hyp(s.vx, s.vy) * dt / Math.max(8, s.size)));
     for (let i = 0; i < steps && !s.done && s.state === 'fly'; i++) {
       s.x += s.vx * dt / steps; s.y += s.vy * dt / steps; s.traveled += hyp(s.vx, s.vy) * dt / steps;
       resonate(w, s);
       flyCollide(w, s);
+      if (!s.done && s.traveled >= s.stopAt) { boltLand(w, s, false); break; }
     }
     if (s.done || s.state !== 'fly') return;
-    if (s.stopAt !== undefined && s.traveled >= s.stopAt) {
-      if (s.r.trigger === 'fuse' && !s.rolling) activate(w, s, s.x, s.y, null);
-      else arrive(w, s);
-    } else if (s.traveled >= s.range * (s.returns ? 1.9 : 1)) {
-      if (s.r.trigger === 'contact') { s.done = true; w.events.push({ type: 'fizzle', x: s.x, y: s.y, col: s.col }); }
-      else arrive(w, s);
-    } else if (s.r.trigger === 'proximity' && foeNear(w, s, s.radius * 0.6)) activate(w, s, s.x, s.y, null);
+    if (s.traveled >= s.range * (s.returns ? 1.9 : 1)) {
+      s.done = true;
+      if (!advance(w, s, s.x, s.y, Math.atan2(s.vy, s.vx), 'end')) w.events.push({ type: 'fizzle', x: s.x, y: s.y, col: s.col });
+    }
     return;
   }
-  // 待機中の術式（罠）：殻は散逸していく。糸でつながっていれば減りが遅い（③ 散逸）
+  // 合図を待つ弾（罠）：殻は散逸していく。糸でつながっていれば減りが遅い（③ 散逸）
   s.wait += dt * (s.linked ? R.link.decayMul : 1);
-  if (s.r.trigger === 'fuse') { s.fuseT -= dt; if (s.fuseT <= 0) { activate(w, s, s.x, s.y, null); return; } }
-  if (s.r.trigger === 'proximity') { if (foeNear(w, s, s.radius * 0.7)) { activate(w, s, s.x, s.y, null); return; } }
-  if (s.r.trigger === 'contact') { const f = foeNear(w, s, 26); if (f) { activate(w, s, s.x, s.y, f); return; } }
-  // 糸が切れた指示式は、起爆できないまま散逸する
-  if (s.r.trigger === 'command' && !s.linked) s.severT = (s.severT ?? R.link.severedLife) - dt;
-  if (s.wait > 6 * s.r.duration || s.severT <= 0) { s.done = true; w.events.push({ type: 'fizzle', x: s.x, y: s.y, col: s.col }); }
+  if (!s.linked) s.severT -= dt;
+  if (s.wait > R.wait * s.st.time || s.severT <= 0) { s.done = true; w.events.push({ type: 'fizzle', x: s.x, y: s.y, col: s.col }); }
 }
-// 着いた：時限は殻が割れるまで、感知・指示は罠として待つ。接触は着いた場所で起動
-function arrive(w, s) {
-  s.state = 'wait';
-  if (s.kind === 'lob') s.kind = 'trap';
-  if (s.r.trigger === 'contact' && !s.rolling) activate(w, s, s.x, s.y, null);
+// 着いた：放物は落ちた場所の周りに触れる。合図を待つ弾はその場で待つ。ほかは次の段を開く
+function boltLand(w, s, fromArc) {
+  const dir = Math.atan2(s.ty - s.sy, s.tx - s.sx) || Math.atan2(s.vy, s.vx);
+  if (hasNext(s) && s.st.then === 'signal') { s.state = 'wait'; if (s.kind === 'lob') s.kind = 'trap'; return; }
+  const owner = unitById(w, s.owner);
+  if (fromArc && owner) {
+    const rad = 34 * s.st.size;
+    for (const u of w.units) if (u.alive && u.id !== s.owner && u.dashT <= 0 && hyp(u.x - s.x, u.y - s.y) < rad + u.r) touch(w, s, owner, u, 1, u.x - s.x, u.y - s.y, owner.x, owner.y);
+    w.events.push({ type: 'splat', x: s.x, y: s.y, col: s.col });
+  }
+  s.done = true;
+  if (!advance(w, s, s.x, s.y, dir, 'hit') && !fromArc) w.events.push({ type: 'fizzle', x: s.x, y: s.y, col: s.col });
 }
 function foeNear(w, s, rad) {
   for (const u of w.units) if (u.alive && u.id !== s.owner && u.dashT <= 0 && hyp(u.x - s.x, u.y - s.y) < rad + u.r) return u;
   return null;
 }
+// 構造（壁・結界・刃）へ与える力：分で鋭く、質の相性で変わる。光線はエネルギーの構造を砕く
+function structHit(s, targetMatter, ray = false) {
+  const vs = ray ? (targetMatter === 'energy' ? C.clash.rayOnEnergy : C.clash.rayOnSolid) * C.ray.structMul
+    : s.matter === 'solid' && targetMatter === 'energy' ? C.clash.solidOnEnergy : s.matter === 'energy' && targetMatter === 'solid' ? C.clash.energyOnSolid : 1;
+  return s.dmg * touchPower(s.st) * (1 + C.structPer * echo(s.st.p.divide)) * vs;
+}
+// 構造の換：受け止めた一撃を持ち主の魔力へ
+function absorbInto(w, o, amount) {
+  if (!o.st || !o.st.p.convert) return;
+  const u = unitById(w, o.owner);
+  if (u) u.mp = Math.min(maxMp(u), u.mp + amount * C.absorb * echo(o.st.p.convert));
+}
 function flyCollide(w, s) {
-  const passWard = s.res.type === 'void' || extrasCount(s.r, 'phase') > 0;
-  const C = R.clash;
-  for (const k of w.rocks) if (hyp(k.x - s.x, k.y - s.y) < k.r * 0.92 + s.size) { hitObstacle(w, s, k.x, k.y, k.r * 0.92 + s.size); return; }
+  for (const k of w.rocks) if (hyp(k.x - s.x, k.y - s.y) < k.r * 0.92 + s.size) { stopBolt(w, s); return; }
   for (const g of w.wards) {
-    if (g.owner === s.owner || g.hp <= 0 || s.passed.includes(g.id)) continue;
+    if (g.hp <= 0 || s.passed.includes(g.id)) continue;
     const cp = wardPoint(g, s.x, s.y);
     if (hyp(cp.x - s.x, cp.y - s.y) > g.r + s.size) continue;
-    const go = unitById(w, g.owner);
-    // 完全の結界：どちらの質も通さず、削れもしない
-    if (g.matter === 'perfect') {
-      if (go) go.blocked++;
-      w.events.push({ type: 'absorb', x: s.x, y: s.y, col: g.col, kind: 'perfect' });
-      hitObstacle(w, s, cp.x, cp.y, g.r + s.size);
-      return;
-    }
-    // 固体はエネルギーの結界を剥がす。形の貫通力（斧・槌・槍…）が強いほど大きく削る
-    let hit = s.dmg * s.wardMul;
-    if (s.matter === 'solid' && g.matter === 'energy') { hit *= C.strip; w.events.push({ type: 'strip', x: s.x, y: s.y, col: s.col }); }
-    else if (['sunder', 'corrode', 'unmake'].includes(s.res.type)) hit *= 3.5;
+    // 相の点が壁の結より多ければ、すり抜ける
+    if (s.veil > g.bindLv) { s.passed.push(g.id); w.events.push({ type: 'phased', x: s.x, y: s.y, col: s.col }); continue; }
+    const hit = structHit(s, g.matter);
     hurtWard(w, g, hit);
-    // 設置壁は岩と同じ遮蔽物。壊した一撃もここで受け止める。
-    if (go) go.blocked++;
-    hitObstacle(w, s, cp.x, cp.y, g.r + s.size);
+    absorbInto(w, g, hit);
+    // 設置壁は岩と同じ遮蔽物。壊した一撃もここで受け止める
+    const go = unitById(w, g.owner);
+    if (go && g.owner !== s.owner) go.blocked++;
+    stopBolt(w, s);
     return;
   }
-  // 結界系の領域（重縛結界・位相転換・反力変換）
-  const z = passWard ? null : barrierAt(w, s.x, s.y, s.owner, s.passed);
+  const z = barrierAt(w, s.x, s.y, s.owner, s.passed);
   if (z) {
+    if (s.veil > z.bindLv) { s.passed.push(z.id); return; }
+    const hit = structHit(s, z.matter);
+    hurtZone(w, z, hit);
+    absorbInto(w, z, hit);
     const zo = unitById(w, z.owner);
-    if (z.matter !== 'perfect' && s.matter === 'energy' && z.matter === 'solid') {
-      s.passed.push(z.id); hurtZone(w, z, s.dmg * C.pierceWard * s.wardMul); s.dmg *= C.pierceKeep;
-      w.events.push({ type: 'pierce', x: s.x, y: s.y, col: s.col });
-      return;
-    }
-    if (z.matter !== 'perfect' && s.matter === 'solid' && z.matter === 'energy') {
-      hurtZone(w, z, s.dmg * C.strip * s.wardMul);
-      w.events.push({ type: 'strip', x: s.x, y: s.y, col: s.col });
-      if (z.dead) { s.passed.push(z.id); return; }
-    } else hurtZone(w, z, s.dmg * s.wardMul);
+    // 結界を砕ききった弾は、弱まって抜ける
+    if (z.dead) { s.passed.push(z.id); s.dmg *= .7; return; }
     if (zo) zo.blocked++;
-    if (z.barrier === 'counter') { reflect(w, s, z.owner, z.col); return; }
-    if (z.barrier === 'shift') { const zo = unitById(w, z.owner); if (zo) zo.mp = Math.min(maxMp(zo), zo.mp + s.cost * 0.4); }
     s.done = true;
-    w.events.push({ type: 'absorb', x: s.x, y: s.y, col: z.col, kind: z.barrier });
+    w.events.push({ type: 'absorb', x: s.x, y: s.y, col: z.col, kind: 'bulwark' });
+    advance(w, s, s.x - s.vx * .02, s.y - s.vy * .02, Math.atan2(s.vy, s.vx), 'hit');
     return;
   }
+  const owner = unitById(w, s.owner);
   for (const u of w.units) {
     if (!u.alive || u.id === s.owner || s.hit.includes(u.id) || u.dashT > 0) continue;
     if (hyp(u.x - s.x, u.y - s.y) > u.r + s.size) continue;
-    // 反力変換の構え：触れた弾を撃ち返す
-    if (u.reflectT > 0) { reflect(w, s, u.id, s.col); return; }
-    if (s.r.trigger === 'contact' || s.r.trigger === 'proximity') {
-      if (s.pierce > 0) { s.pierce--; s.hit.push(u.id); effectAt(w, s, s.x, s.y, 10, 1, u); continue; }
-      activate(w, s, s.x, s.y, u);
-      return;
-    }
-    // 時限の弾は体をすり抜け、狙った地点で炸裂する（地点を狙う術）。指示の術式は体に当たるとそこで止まる
-    if (s.r.trigger === 'fuse' && !s.rolling) { s.hit.push(u.id); continue; }
-    arrive(w, s);
+    if (owner) touch(w, s, owner, u, 1, s.vx, s.vy, owner.x, owner.y);
+    // 分の点の数だけ体を貫く
+    if (s.pierce > 0) { s.pierce--; s.hit.push(u.id); continue; }
+    s.done = true;
+    advance(w, s, s.x, s.y, Math.atan2(s.vy, s.vx), 'hit');
     return;
   }
 }
-// 反射：糸は元の術者から離れる（旧版の境界の決まり）
-function reflect(w, s, newOwner, col) {
-  s.owner = newOwner; s.linked = false; s.hold = false; s.vx = -s.vx; s.vy = -s.vy; s.hit = [newOwner]; s.traveled = 0; s.homing = false; s.passed = [];
-  w.events.push({ type: 'reflect', x: s.x, y: s.y, col });
+// 岩・壁に止められた弾：手前で次の段を開く
+function stopBolt(w, s) {
+  s.done = true;
+  const x = s.x - s.vx * .02, y = s.y - s.vy * .02;
+  if (!advance(w, s, x, y, Math.atan2(s.vy, s.vx), 'hit')) w.events.push({ type: 'splat', x: s.x, y: s.y, col: s.col });
 }
-function hitObstacle(w, s, cx, cy, rad) {
-  // 手裏剣：岩や結界に当たると跳ね返る（当たった面の向きで反射）
-  if (s.bounce > 0 && cx !== undefined) {
-    s.bounce--;
-    const dx = s.x - cx, dy = s.y - cy, d = hyp(dx, dy) || 1, nx = dx / d, ny = dy / d, vn = s.vx * nx + s.vy * ny;
-    if (vn < 0) { s.vx -= 2 * vn * nx; s.vy -= 2 * vn * ny; }
-    s.x = cx + nx * (rad + 1); s.y = cy + ny * (rad + 1);
-    w.events.push({ type: 'ricochet', x: s.x, y: s.y, col: s.col });
-    return;
-  }
-  if (s.r.trigger === 'contact') {
-    if (s.r.form === 'point' && !STRUCTURE.includes(s.res.type) && s.r.deploy === 'single') { s.done = true; w.events.push({ type: 'splat', x: s.x, y: s.y, col: s.col }); }
-    else activate(w, s, s.x, s.y, null);
-  } else { s.x -= s.vx * 0.02; s.y -= s.vy * 0.02; arrive(w, s); }
+// 線：岩と設置壁で止まり、途中の相手を貫く。相の点が結より多ければ構造を越える
+function fireRays(w, owner, base, at) {
+  const st = base.st, n = C.copies[st.p.grow], m = 1 / Math.sqrt(n), lead = (n - 1) >> 1;
+  const first = base.si === 0;
+  const ox = first ? owner.x : at.x, oy = first ? owner.y : at.y;
+  for (let i = 0; i < n; i++) fireRay(w, owner, { ...base, mul: base.mul * m, dmg: base.dmg * m }, ox, oy, at.dir + (i - (n - 1) / 2) * C.spread * .7, first, i === lead, at);
 }
-// 貫通光線：岩と設置壁で止まり、途中の相手を貫く。位相は領域型の結界だけを越える
-function fireBeam(w, u, common, a, range, width) {
-  const x0 = u.x + Math.cos(a) * u.r, y0 = u.y + Math.sin(a) * u.r;
+function fireRay(w, u, s, ox, oy, a, first, lead, at) {
+  const st = s.st, x0 = ox + (first ? Math.cos(a) * u.r : 0), y0 = oy + (first ? Math.sin(a) * u.r : 0);
   const dx = Math.cos(a), dy = Math.sin(a);
+  const range = C.vessels.ray.range * (1 + C.ray.motionRange * echo(st.p.motion)), width = C.ray.width * st.size;
   // 線と円が最初に交わる距離（交わらなければ null。始点が円の中なら 0）
   const entry = (cx, cy, r) => {
     const fx = cx - x0, fy = cy - y0, t = fx * dx + fy * dy;
     const off = hyp(fx - dx * t, fy - dy * t);
     if (off >= r) return null;
-    const l = t - Math.sqrt(r * r - off * off);
     if (t + Math.sqrt(r * r - off * off) < 0) return null;
-    return Math.max(0, l);
+    return Math.max(0, t - Math.sqrt(r * r - off * off));
   };
   let len = range;
   for (const k of w.rocks) { const e = entry(k.x, k.y, k.r * 0.9); if (e !== null && e < len) len = e; }
-  // 光線は溜めが長い分、一撃が重い。設置壁を壊しても、その一撃は壁で止まる
-  const C = R.clash;
-  let dmg = common.dmg * (D.behaviors.beam.hitMul || 1);
-  const passWard = common.res.type === 'void' || extrasCount(common.r, 'phase') > 0;
-  {
-    const blocks = [];
-    for (const g of w.wards) {
-      if (g.owner === u.id || g.hp <= 0) continue;
-      // 面の結界は線分に沿って並べた円で調べる
-      let e = null;
-      for (const p of wardSamples(g)) { const q = entry(p.x, p.y, g.r); if (q !== null && (e === null || q < e)) e = q; }
-      if (e !== null && e < len) blocks.push({ e, o: g, ward: true });
+  const blocks = [];
+  for (const g of w.wards) {
+    if (g.hp <= 0 || s.veil > g.bindLv) continue;
+    let e = null;
+    for (const p of wardSamples(g)) { const q = entry(p.x, p.y, g.r); if (q !== null && (e === null || q < e)) e = q; }
+    if (e !== null && e < len) blocks.push({ e, o: g, kind: 'ward' });
+  }
+  for (const b of w.spells) if (!b.done && b.kind === 'orbiter' && b.owner !== u.id && s.veil <= b.bindLv) {
+    const e = entry(b.x, b.y, b.size);
+    if (e !== null && e < len) blocks.push({ e, o: b, kind: 'blade' });
+  }
+  for (const z of w.zones) if (z.barrier && !z.dead && z.owner !== u.id && s.veil <= z.bindLv) { const e = entry(z.x, z.y, z.zr); if (e !== null && e < len) blocks.push({ e, o: z, kind: 'zone' }); }
+  blocks.sort((p, q) => p.e - q.e);
+  let dmgMul = 1;
+  for (const b of blocks) {
+    if (b.e >= len) break;
+    const o = b.o, hit = structHit({ ...s, dmg: s.dmg * dmgMul }, o.matter, true);
+    const defender = unitById(w, o.owner);
+    if (b.kind === 'blade') { o.hp -= hit; absorbInto(w, o, hit); if (o.hp <= 0) bladeBroken(w, o); }
+    else if (b.kind === 'ward') { hurtWard(w, o, hit); absorbInto(w, o, hit); }
+    else {
+      hurtZone(w, o, hit); absorbInto(w, o, hit);
+      // 光線は結界を砕けば奥へ届く（弱まる）
+      if (o.dead) { dmgMul *= R.interfere.pierceKeep; w.events.push({ type: 'pierce', x: x0 + dx * b.e, y: y0 + dy * b.e, col: s.col }); continue; }
     }
-    for (const z of w.zones) if (!passWard && z.barrier && !z.dead && z.owner !== u.id) { const e = entry(z.x, z.y, z.zr); if (e !== null && e < len) blocks.push({ e, o: z, ward: false }); }
-    blocks.sort((p, q) => p.e - q.e);
-    for (const b of blocks) {
-      if (b.e >= len) break;
-      const o = b.o;
-      // 完全の結界は光線でも砕けない
-      if (o.matter === 'perfect') {
-        len = b.e;
-        const po = unitById(w, o.owner); if (po) po.blocked++;
-        w.events.push({ type: 'absorb', x: x0 + dx * len, y: y0 + dy * len, col: o.col, kind: 'perfect' });
-        break;
-      }
-      const solid = o.matter === 'solid', hit = dmg * (solid ? C.beamSolid : C.beamWard);
-      if (b.ward) hurtWard(w, o, hit); else hurtZone(w, o, hit);
-      const broke = b.ward ? o.hp <= 0 : o.dead;
-      if (!b.ward && (solid || broke)) {
-        if (!broke) { dmg *= C.pierceKeep; w.events.push({ type: 'pierce', x: x0 + dx * b.e, y: y0 + dy * b.e, col: common.col }); }
-        continue;
-      }
-      len = b.e;
-      const defender = unitById(w, o.owner); if (defender) defender.blocked++;
-      w.events.push({ type: 'absorb', x: x0 + dx * len, y: y0 + dy * len, col: o.col, kind: o.barrier || o.kind });
-      break;
-    }
+    len = b.e;
+    if (defender && o.owner !== u.id) defender.blocked++;
+    w.events.push({ type: 'absorb', x: x0 + dx * len, y: y0 + dy * len, col: o.col, kind: b.kind === 'zone' ? 'bulwark' : 'solid' });
+    break;
   }
   len = Math.max(0, len);
   const onBeam = (x, y, r) => { const fx = x - x0, fy = y - y0, t = fx * dx + fy * dy; return t > 0 && t < len && hyp(fx - dx * t, fy - dy * t) < r + width; };
+  // 違う紋のエネルギーの弾を焼き払う
   for (const o of w.spells) if (!o.done && o.kind === 'proj' && o.state === 'fly' && o.owner !== u.id && o.matter === 'energy' && onBeam(o.x, o.y, o.size)) {
-    o.done = true; w.events.push({ type: 'cancel', x: o.x, y: o.y, col: common.col, col2: o.col });
+    breakBolt(w, o); w.events.push({ type: 'cancel', x: o.x, y: o.y, col: s.col, col2: o.col });
   }
-  for (const z of w.zones) if (z.owner === u.id && !z.dead && z.matter !== 'solid' && onBeam(z.x, z.y, z.zr)) {
-    dmg *= R.resonance; w.events.push({ type: 'resonate', x: z.x, y: z.y, col: z.col, col2: common.col, owner: u.id });
+  // 自分のエネルギーの場を通ると共鳴する
+  for (const z of w.zones) if (z.owner === u.id && !z.dead && z.kind === 'field' && !z.barrier && z.matter !== 'solid' && onBeam(z.x, z.y, z.zr)) {
+    dmgMul *= C.resonance; w.events.push({ type: 'resonate', x: z.x, y: z.y, col: z.col, col2: s.col, owner: u.id });
     break;
   }
   for (const o of w.units) {
     if (!o.alive || o.id === u.id || o.dashT > 0) continue;
     const fx = o.x - x0, fy = o.y - y0, t = fx * dx + fy * dy;
     if (t < 0 || t >= len) continue;
-    // 光線もわずかに散る（届いた距離で弱まる）
-    if (hyp(fx - dx * t, fy - dy * t) < o.r + width) hitFoe(w, { ...common, dmg, vx: dx, vy: dy, traveled: Math.max(0, t) }, u, o, 1, dx, dy);
+    if (hyp(fx - dx * t, fy - dy * t) < o.r + width) touch(w, { ...s, dmg: s.dmg * dmgMul, traveled: t, x: o.x, y: o.y }, u, o, C.ray.mul, dx, dy, u.x, u.y);
   }
-  // 光線でも現象を捨てない。照準地点（遮蔽物より手前）で構造を作り、直撃は二重に数えない。
-  const reach = Math.min(len, Math.max(0, hyp(u.input.tx - u.x, u.input.ty - u.y) - u.r));
-  const payload = { ...common, x: x0 + dx * reach, y: y0 + dy * reach, vx: dx, vy: dy, dmg };
-  effectAt(w, payload, payload.x, payload.y, common.radius, 1, null, false);
-  if (common.res.type === 'swarm') for (let i = 0; i < 3; i++) spawnShard(w, payload, payload.x, payload.y, w.rng() * TAU, 0.3);
-  w.events.push({ type: 'beam', id: u.id, x1: x0, y1: y0, x2: x0 + dx * len, y2: y0 + dy * len, w: width, col: common.col, rtype: common.res.type, a: common.r.a, b: common.r.b });
+  w.events.push({ type: 'beam', id: u.id, x1: x0, y1: y0, x2: x0 + dx * len, y2: y0 + dy * len, w: width, col: s.col, rtype: 'ray', a: s.look.a, b: s.look.b });
+  // 次の段は照準の地点（遮られればその手前）で開く
+  if (lead) {
+    const reach = first ? Math.min(len, Math.max(0, hyp(at.tx - u.x, at.ty - u.y) - u.r)) : len;
+    advance(w, { ...s, grp: null, advanced: false }, x0 + dx * reach, y0 + dy * reach, a, 'hit');
+  }
 }
 
-// ═══ 09. 起動（追加機能）と現象 ═════════════════════════════════
-// 構造を作る現象：起動した場所に結界・領域・囮を置く。残留させると長く保つ
-const STRUCTURE = ['solid', 'wall', 'trench', 'root', 'prison', 'bulwark', 'shift', 'counter', 'bloom', 'well', 'mirror', 'blink', 'mend', 'veil'];
-function activate(w, s, x, y, direct) {
-  s.done = true;
-  const owner = unitById(w, s.owner);
-  if (!owner) return;
-  const r = s.r, type = s.res.type, dep = r.deploy;
-  w.events.push({ type: 'activate', x, y, r: s.radius, col: s.col, rtype: type, a: r.a, b: r.b, deploy: dep, form: r.form, owner: s.owner, matter: r.matter });
-  if (dep !== 'sprinkle' && (r.form !== 'point' || dep === 'burst')) {
-    for (const o of w.spells) {
-      if (o.done || o.kind !== 'proj' || o.state !== 'fly' || o.owner === s.owner || hyp(o.x - x, o.y - y) > s.radius) continue;
-      if (o.matter === 'energy') { o.done = true; w.events.push({ type: 'cancel', x: o.x, y: o.y, col: s.col, col2: o.col }); }
-      else { const d = hyp(o.x - x, o.y - y) || 1, sp = hyp(o.vx, o.vy); o.vx = (o.x - x) / d * sp; o.vy = (o.y - y) / d * sp; o.homing = false; o.dmg *= 0.7; w.events.push({ type: 'ricochet', x: o.x, y: o.y, col: o.col }); }
-    }
-    const reach = s.radius * R.chainReach;
-    for (const o of w.spells) {
-      if (o === s || o.done || o.state !== 'wait' || hyp(o.x - x, o.y - y) > reach) continue;
-      if (o.owner === s.owner) {
-        w.events.push({ type: 'chainBlast', x1: x, y1: y, x2: o.x, y2: o.y, col: o.col });
-        activate(w, o, o.x, o.y, null);
-      } else { o.done = true; w.events.push({ type: 'fizzle', x: o.x, y: o.y, col: o.col }); }
-    }
-  }
-  if (dep === 'sprinkle') {
-    // 散魔：攻撃せず、負荷の約8割を魔力の粒として撒く。粒は追尾の囮にもなる
-    const total = s.cost * R.sprinkle, n = 6;
-    for (let i = 0; i < n; i++) dropMote(w, x, y, total / n, 'yellow', 200, 0, true);
-    w.decoys.push({ id: w.nextId++, owner: s.owner, x, y, t: 0, life: R.decoy.life, col: s.col });
-    return;
-  }
-  if (dep === 'linger' && !STRUCTURE.includes(type)) { spawnZone(w, { ...s, x, y }, 'linger', s.radius, 3.5 * r.duration); return; }
-  if (dep === 'siphon') {
-    if (STRUCTURE.includes(type)) effectAt(w, s, x, y, s.radius, 1, direct);
-    spawnZone(w, { ...s, x, y }, 'siphon', s.radius, 3 * r.duration); return;
-  }
-  const mul = dep === 'burst' ? 1.1 : dep === 'scatter' ? 0.55 : 1;
-  effectAt(w, s, x, y, dep === 'scatter' ? s.radius * 0.6 : s.radius, mul, direct);
-  if (dep === 'scatter' && !s.frag) for (let i = 0; i < 5; i++) spawnShard(w, s, x, y, i / 5 * TAU + w.rng(), 0.32);
-  // 小片からはさらに小片を生まない（増殖が止まらなくなる）
-  if (type === 'swarm' && !s.frag) for (let i = 0; i < 3; i++) spawnShard(w, s, x, y, w.rng() * TAU, 0.3);
+// ═══ 09. 器：面・円・纏・環 ═════════════════════════════════════
+// 面の1段目が立つ最大の距離（術者から）。動の点で遠くへ立つ
+const wallReach = st => C.vessels.wall.range + C.wall.reachMotion * echo(st.p.motion);
+function wallSpot(u, tx, ty, st) {
+  const dx = tx - u.x, dy = ty - u.y, d = hyp(dx, dy), a = d > 1 ? Math.atan2(dy, dx) : u.aim;
+  const dist = clamp(d, u.r + 40, Math.max(u.r + 40, wallReach(st)));
+  return { x: u.x + Math.cos(a) * dist, y: u.y + Math.sin(a) * dist };
 }
-// 追尾する小片（分裂・増殖苗床・増の追加性質）
-function spawnShard(w, s, x, y, a, mul) {
-  const r = { ...s.r, form: 'point', behavior: 'homing', trigger: 'contact', deploy: 'single', link: 'cut', extras: s.r.extras.filter(k => k !== 'grow') };
-  w.spells.push({
-    owner: s.owner, col: s.col, r, res: s.res, dmg: s.dmg * mul, radius: 30, hold: false, linked: false, cost: 0, cast: s.cast,
-    id: w.nextId++, kind: 'proj', state: 'fly', x, y, vx: Math.cos(a) * 420 * r.velocity, vy: Math.sin(a) * 420 * r.velocity, speed: 420 * r.velocity,
-    range: 420, traveled: 0, age: 0, wait: 0, fuseT: 1, homing: true, tgt: null, retarget: 0, size: 4, pierce: 0, hit: [], shape: 'shard', frag: true,
-    matter: s.r.matter, passed: [], bounce: 0, t: 0, life: 0, ang: 0, orad: 0, hp: 0, hitT: 0,
-    wardMul: 1, returns: false, back: false, spin: 0, orbMul: 0
-  });
+// 面：術者の正面に立つ一枚の壁。誰の体も弾も光線も止める（② 構造体）
+function spawnWall(w, owner, base, at) {
+  const st = base.st, first = base.si === 0;
+  // 1段目は術者の正面に立つ（照準は向きと近さだけを決める）。遠くへは動で、それ以上は前の段の着弾点から
+  const p = first ? wallSpot(owner, at.tx, at.ty, st) : { x: at.x, y: at.y };
+  const dir = first && hyp(p.x - owner.x, p.y - owner.y) > 1 ? Math.atan2(p.y - owner.y, p.x - owner.x) : at.dir;
+  const half = C.wall.half * st.size * (1 + C.wall.growLen * echo(st.p.grow));
+  const hp = C.wall.hp * (1 + C.wall.bindHp * echo(st.p.bind)) * C.hardness[st.matter] * Math.sqrt(st.size) * base.unit * base.mul;
+  const nx = -Math.sin(dir), ny = Math.cos(dir);
+  addWard(w, base, p.x, p.y, 15, hp, 'wall', C.wall.life * st.time, nx * half, ny * half, Math.cos(dir), Math.sin(dir));
+  w.events.push({ type: 'zone', id: 0, kind: 'wall', x: p.x, y: p.y, r: half, col: base.col, rtype: 'wall', owner: owner.id });
 }
-// 現象が起こる：範囲の中の違う紋に効き、種類によって結界・領域を作る
-function effectAt(w, s, x, y, radius, mul, direct, applyHits = true) {
-  const owner = unitById(w, s.owner);
-  if (!owner) return;
-  const type = s.res.type, r = s.r, dur = r.duration * (r.deploy === 'linger' ? 1.8 : 1);
-  const foes = [];
-  for (const u of w.units) {
-    if (!u.alive || u.id === s.owner || u.dashT > 0) continue;
-    if (u === direct || hyp(u.x - x, u.y - y) < radius + u.r) foes.push(u);
-  }
-  const dir = s.vx || s.vy ? Math.atan2(s.vy, s.vx) : owner.aim;
-  switch (type) {
-    case 'solid': case 'wall': case 'trench': buildWards(w, s, x, y, dir, type, dur); break;
-    case 'root': buildWards(w, s, x, y, dir, 'root', dur * 0.6); break;
-    case 'prison': for (const u of foes) ringWards(w, s, u.x, u.y, u.r + 30, 8, 'prison', 2.8 * r.duration); break;
-    case 'bulwark': case 'shift': spawnZone(w, { ...s, x, y }, 'barrier', radius * 0.8, 4 * dur); break;
-    case 'counter': owner.reflectT = Math.max(owner.reflectT, 1.2 * r.duration); break;
-    case 'bloom': spawnZone(w, { ...s, x, y }, 'bloom', radius, 3 * dur); break;
-    case 'well': spawnZone(w, { ...s, x, y }, 'well', radius, 4 * dur); break;
-    case 'mirror':
-      // 重層鏡界：術者の像を置き、追尾をそちらへ引く
-      for (let i = 0; i < 2; i++) { const a = w.rng() * TAU; w.decoys.push({ id: w.nextId++, owner: s.owner, x: owner.x + Math.cos(a) * 70, y: owner.y + Math.sin(a) * 70, t: 0, life: R.decoy.life * r.duration, col: s.col, mirror: true, ink: owner.ink, crest: owner.crest, r: owner.r }); }
-      break;
-    case 'blink': {
-      // 転位穿孔：術式の到達点へ位相を先行させ、術者が跳ぶ
-      const ok = hyp(x, y) < w.R && !w.rocks.some(k => hyp(k.x - x, k.y - y) < k.r + owner.r);
-      if (ok) { w.events.push({ type: 'blink', id: owner.id, x1: owner.x, y1: owner.y, x2: x, y2: y, col: s.col }); owner.x = x; owner.y = y; owner.phaseT = Math.max(owner.phaseT, 0.45); }
-      break;
-    }
-    case 'mend':
-      // 修復：自分の紋の魔力で構造を埋め直す。範囲に自分がいれば直る
-      if (hyp(owner.x - x, owner.y - y) < radius + owner.r) heal(w, owner, s.dmg * 1.1 * mul);
-      break;
-    case 'sunder': case 'corrode': case 'unmake':
-      for (const g of w.wards) if (g.owner !== s.owner && wardDist(g, x, y) < radius + g.r) hurtWard(w, g, s.dmg * (type === 'unmake' ? 99 : 3.5), type === 'unmake');
-      if (type === 'unmake') {
-        for (const z of w.zones) if (z.owner !== s.owner && hyp(z.x - x, z.y - y) < radius + z.zr) z.dead = true;
-        for (const o of w.spells) if (o.owner !== s.owner && (o.state === 'wait' || o.kind === 'orbiter') && !o.done && hyp(o.x - x, o.y - y) < radius) { o.done = true; w.events.push({ type: 'fizzle', x: o.x, y: o.y, col: o.col }); }
-      }
-      break;
-  }
-  if (applyHits) for (const u of foes) hitFoe(w, s, owner, u, mul, (u.x - x) || Math.cos(dir), (u.y - y) || Math.sin(dir));
-}
-function heal(w, u, amount) {
-  if (!u.alive || amount <= 0) return;
-  u.hp = Math.min(u.maxHp, u.hp + amount);
-  w.events.push({ type: 'heal', id: u.id, x: u.x, y: u.y, v: amount });
-}
-
-// ═══ 10. 領域・結界・囮 ═════════════════════════════════════════
-function spawnZone(w, s, kind, zr, life) {
-  const barrier = kind === 'barrier' ? s.res.type
-    : kind === 'orbit' && ['bulwark', 'shift', 'counter'].includes(s.res.type) ? s.res.type : null;
-  // 結界の領域は硬さを持つ。強い光線や、エネルギーの膜を剥がす固体の弾で砕ける
-  const hp = barrier ? (R.barrierHp.base + s.res.control * R.barrierHp.perControl) * s.r.power : 0;
-  const z = { id: w.nextId++, owner: s.owner, col: s.col, r: s.r, res: s.res, dmg: s.dmg, cost: s.cost, hold: s.hold, linked: s.linked,
-    kind, x: s.x, y: s.y, zr, t: 0, life, tick: 0, barrier, matter: s.r.matter, hp, max: hp, dead: false };
-  w.zones.push(z);
-  // 周回で構造を作る現象は、術者の周りに一度だけ作る
-  const owner = unitById(w, s.owner);
-  if (kind === 'orbit' && owner) {
-    if (s.res.type === 'solid') owner.shield = Math.max(owner.shield, 12 + s.res.terrain * 0.4 * s.r.power);   // 固化装甲
-    if (['wall', 'trench', 'root', 'prison'].includes(s.res.type)) ringWards(w, s, owner.x, owner.y, owner.r + 44, 10, s.res.type, 3 * s.r.duration);
-    if (s.res.type === 'counter') owner.reflectT = Math.max(owner.reflectT, 0.8);
-    if (s.res.type === 'mirror') effectAt(w, s, owner.x, owner.y, zr, 1, null, false);
-  }
-  w.events.push({ type: 'zone', id: z.id, kind, x: z.x, y: z.y, r: zr, col: z.col, rtype: s.res.type, owner: s.owner });
-  return z;
-}
-function updateZones(w, dt) {
-  for (let i = w.zones.length - 1; i >= 0; i--) {
-    const z = w.zones[i];
-    const owner = unitById(w, z.owner);
-    z.t += dt * (z.linked ? R.link.decayMul : 1);
-    if (z.dead || z.t > z.life || !owner || !owner.alive) { w.zones.splice(i, 1); w.events.push({ type: 'zoneEnd', x: z.x, y: z.y, col: z.col }); continue; }
-    if (z.kind === 'orbit') { z.x = owner.x; z.y = owner.y; }
-    z.tick -= dt;
-    if (z.tick > 0) continue;
-    z.tick = 0.5;
-    const type = z.res.type;
-    const inside = u => hyp(u.x - z.x, u.y - z.y) < z.zr + u.r;
-    if (z.kind === 'bloom') {
-      if (inside(owner)) heal(w, owner, owner.maxHp * 0.04);
-      for (const u of w.units) if (u.alive && u !== owner && inside(u)) hitFoe(w, z, owner, u, 0.25, u.x - z.x, u.y - z.y);
-      continue;
-    }
-    if (z.kind === 'well') { if (inside(owner)) owner.mp = Math.min(maxMp(owner), owner.mp + 6); continue; }
-    if (z.kind === 'barrier') continue;
-    if (z.kind === 'siphon') {
-      // 吸魔：領域の中の違う紋から魔力と魔素を奪う
-      for (const u of w.units) {
-        if (!u.alive || u === owner || !inside(u)) continue;
-        const m = Math.min(u.mp, R.siphon.mp * z.r.power); u.mp -= m; owner.mp = Math.min(maxMp(owner), owner.mp + m);
-        if (u.mass > 0) { const s = Math.min(u.mass, R.siphon.mass * z.r.power); u.mass -= s; refreshBody(u); gain(w, owner, s); }
-        if (!STRUCTURE.includes(type)) hitFoe(w, z, owner, u, 0.2, u.x - z.x, u.y - z.y);
-      }
-      continue;
-    }
-    if (z.kind === 'orbit') {
-      if (type === 'well') { owner.mp = Math.min(maxMp(owner), owner.mp + 6); continue; }
-      if (z.barrier || ['solid', 'wall', 'trench', 'root', 'prison', 'well', 'mirror', 'blink', 'veil'].includes(type)) continue;
-      if (type === 'mend' || type === 'bloom') { heal(w, owner, z.dmg * 0.35); continue; }
-    }
-    // 残留・周回：中にいる違う紋に作用し続ける
-    for (const u of w.units) if (u.alive && u !== owner && inside(u)) {
-      if (z.kind === 'linger') slow(u, R.linger.slow, 0.6);
-      hitFoe(w, z, owner, u, z.kind === 'orbit' ? 0.4 : R.linger.tick, u.x - z.x, u.y - z.y);
-    }
-  }
-  for (let i = w.wards.length - 1; i >= 0; i--) {
-    const g = w.wards[i];
-    g.t += dt * (g.linked ? R.link.decayMul : 1);
-    if (g.hp <= 0 || g.t > g.life || !unitById(w, g.owner)) w.wards.splice(i, 1);
-  }
-  for (let i = w.decoys.length - 1; i >= 0; i--) { const d = w.decoys[i]; d.t += dt; if (d.t > d.life) w.decoys.splice(i, 1); }
-}
-// 結界（固化・物性編壁・掘削塹壕・根絡）：違う紋の弾と体を止める。自分の紋は通れる（① 紋）
-// 細い波・壁は「面の結界」（一枚の壁）、環は多角形に囲む城壁、弾は太い柱、広い場は散らばる柱
-// 固体の結界はとても硬い（RULES.solidWardHp）。面の結界は一枚でまとめて硬い（RULES.slabHp）
-function buildWards(w, s, x, y, dir, kind, dur) {
-  const owner = unitById(w, s.owner);
-  const hp = (18 + s.res.terrain * 0.32) * s.r.power * (kind === 'wall' ? 1.5 : 1) * (1 + Math.sqrt(Math.max(0, owner ? owner.mass : 0)) * 0.02)
-    * (s.r.matter === 'energy' ? 1 : R.solidWardHp);
-  const form = s.r.form, nx = -Math.sin(dir), ny = Math.cos(dir), life = 7 * dur;
-  if (kind !== 'root' && (form === 'line' || form === 'plane')) {
-    const half = form === 'plane' ? 100 : 56;
-    addWard(w, s, x, y, 15, hp * R.slabHp * (form === 'plane' ? 1 : 0.6), kind, life, nx * half, ny * half);
-    return;
-  }
-  if (form === 'ring') {
-    if (kind === 'root') { ringWards(w, s, x, y, s.radius * 0.72, 12, kind, life); return; }
-    // 六角の城壁：六枚の面の結界で囲む
-    const rad = s.radius * 0.72, n = 6;
-    for (let i = 0; i < n; i++) {
-      const a1 = i / n * TAU, a2 = (i + 1) / n * TAU;
-      const ax = x + Math.cos(a1) * rad, ay = y + Math.sin(a1) * rad, bx = x + Math.cos(a2) * rad, by = y + Math.sin(a2) * rad;
-      addWard(w, s, (ax + bx) / 2, (ay + by) / 2, 13, hp * R.slabHp * 0.5, kind, life, (bx - ax) / 2, (by - ay) / 2);
-    }
-    return;
-  }
-  const pts = [];
-  if (form === 'point') pts.push({ x, y });
-  else for (let i = 0; i < 8; i++) { const a = w.rng() * TAU, d = Math.sqrt(w.rng()) * s.radius * 0.8; pts.push({ x: x + Math.cos(a) * d, y: y + Math.sin(a) * d }); }
-  const rr = form === 'point' ? 34 : 24;
-  for (const p of pts) addWard(w, s, p.x, p.y, rr, form === 'point' ? hp * 2 : hp, kind, life);
-}
-function ringWards(w, s, x, y, rad, n, kind, life) {
-  const hp = (14 + s.res.terrain * 0.25) * s.r.power;
-  for (let i = 0; i < n; i++) addWard(w, s, x + Math.cos(i / n * TAU) * rad, y + Math.sin(i / n * TAU) * rad, 20, hp, kind, life);
-}
-// hx, hy：面の結界の半分の長さのベクトル（柱なら 0）。面は線分 (x±hx, y±hy) に太さ r を持つ
-function addWard(w, s, x, y, r, hp, kind, life, hx = 0, hy = 0) {
+// hx, hy：面の半分の長さのベクトル。面は線分 (x±hx, y±hy) に太さ r を持つ。dx, dy：動で進む向き
+function addWard(w, s, x, y, r, hp, kind, life, hx, hy, dx, dy) {
   if (hyp(x, y) > w.R + 100) return;
-  w.wards.push({ id: w.nextId++, owner: s.owner, col: s.col, x, y, r, hp, max: hp, t: 0, life, kind, low: kind === 'trench', hold: s.hold, linked: s.linked, cost: s.cost / 5, matter: s.r.matter, broken: false,
-    ax: x - hx, ay: y - hy, bx: x + hx, by: y + hy, len: hyp(hx, hy) * 2 });
+  w.wards.push({ id: w.nextId++, owner: s.owner, col: s.col, x, y, r, hp, max: hp, t: 0, life, kind, low: false, hold: s.hold, linked: s.linked, cost: s.cost, matter: s.matter, broken: false,
+    ax: x - hx, ay: y - hy, bx: x + hx, by: y + hy, len: hyp(hx, hy) * 2, dx, dy, tick: 0,
+    rec: s.rec, si: s.si, st: s.st, look: s.look, mul: s.mul, unit: s.unit, boost: s.boost, dmg: s.dmg, veil: s.veil, bindLv: s.bindLv, advanced: false, grp: null, k: s.k });
 }
 // 結界のいちばん近い点（柱は中心、面は線分の上）
 function wardPoint(g, px, py) {
@@ -1206,25 +996,226 @@ function wardPoint(g, px, py) {
   return { x: g.ax + dx * t, y: g.ay + dy * t };
 }
 function wardDist(g, px, py) { const p = wardPoint(g, px, py); return hyp(px - p.x, py - p.y); }
-// 面の結界を太さの間隔で並べた点（光線と Bot の射線の判定に使う）
+// 面を太さの間隔で並べた点（光線と Bot の射線の判定に使う）
 function wardSamples(g) {
   if (!g.len) return [{ x: g.x, y: g.y }];
   const n = Math.max(2, Math.ceil(g.len / g.r)), out = [];
   for (let i = 0; i <= n; i++) out.push({ x: g.ax + (g.bx - g.ax) * i / n, y: g.ay + (g.by - g.ay) * i / n });
   return out;
 }
-function hurtWard(w, g, dmg, force = false) {
-  if (g.matter === 'perfect' && !force) return;
+function hurtWard(w, g, dmg) {
   g.hp -= dmg;
-  if (g.hp <= 0 && !g.broken) { g.broken = true; w.events.push({ type: 'wardBreak', x: g.x, y: g.y, col: g.col, r: g.r, matter: g.matter }); }
+  if (g.hp <= 0 && !g.broken) {
+    g.broken = true;
+    w.events.push({ type: 'wardBreak', x: g.x, y: g.y, col: g.col, r: g.r, matter: g.matter });
+    advance(w, g, g.x, g.y, Math.atan2(g.dy, g.dx), 'break');
+  }
 }
 function hurtZone(w, z, dmg) {
-  if (!z.barrier || z.dead || z.matter === 'perfect') return;
+  if (!z.barrier || z.dead) return;
   z.hp -= dmg;
-  if (z.hp <= 0) { z.dead = true; w.events.push({ type: 'wardBreak', x: z.x, y: z.y, col: z.col, r: z.zr, matter: z.matter, big: true }); }
+  if (z.hp <= 0) {
+    z.dead = true;
+    w.events.push({ type: 'wardBreak', x: z.x, y: z.y, col: z.col, r: z.zr, matter: z.matter, big: true });
+    advance(w, z, z.x, z.y, Math.atan2(z.dy, z.dx), 'break');
+  }
+}
+// 円：1段目は術者の足元に開く場（遠くへは動で流す・前の段の着弾点から開く）。開いた瞬間に強く作用し、残る間は弱く作用し続ける。結があれば弾を止める結界になる
+function spawnField(w, owner, base, at) {
+  const st = base.st, first = base.si === 0;
+  const p = first ? { x: owner.x, y: owner.y } : { x: at.x, y: at.y };
+  const zr = C.field.radius * st.size;
+  const hp = st.p.bind ? C.field.hp * (1 + C.wall.bindHp * echo(st.p.bind)) * C.hardness[st.matter] * st.size * base.unit * base.mul : 0;
+  const z = { id: w.nextId++, owner: base.owner, col: base.col, look: base.look, kind: 'field', x: p.x, y: p.y, zr, t: 0, life: C.field.life * st.time * (1 + C.field.growLife * echo(st.p.grow)),
+    tick: C.field.tick, barrier: st.p.bind ? 'bulwark' : null, matter: st.matter, hp, max: hp, dead: false, hold: base.hold, linked: base.linked, cost: base.cost,
+    dx: Math.cos(at.dir), dy: Math.sin(at.dir), rec: base.rec, si: base.si, st, mul: base.mul, unit: base.unit, boost: base.boost, dmg: base.dmg, veil: base.veil, bindLv: base.bindLv, advanced: false, grp: null, k: base.k };
+  w.zones.push(z);
+  w.events.push({ type: 'zone', id: z.id, kind: 'field', x: z.x, y: z.y, r: zr, col: z.col, rtype: st.p.bind ? 'bulwark' : 'field', owner: z.owner });
+  fieldBurst(w, z);
+}
+// 開いた瞬間：中の相手に強く作用し、弾を吹き消し、自分の合図の罠を誘爆させる
+function fieldBurst(w, z) {
+  const owner = unitById(w, z.owner), st = z.st;
+  if (!owner) return;
+  w.events.push({ type: 'activate', x: z.x, y: z.y, r: z.zr, col: z.col, rtype: 'field', a: z.look.a, b: z.look.b, deploy: 'burst', form: 'ring', owner: z.owner, matter: z.matter });
+  const strike = st.p.divide || st.p.motion;
+  if (strike) for (const o of w.spells) {
+    if (o.done || o.owner === z.owner || hyp(o.x - z.x, o.y - z.y) > z.zr) continue;
+    if (o.kind === 'proj' && o.state === 'fly') {
+      if (o.matter === 'energy') { breakBolt(w, o); w.events.push({ type: 'cancel', x: o.x, y: o.y, col: z.col, col2: o.col }); }
+      else { const d = hyp(o.x - z.x, o.y - z.y) || 1, sp = hyp(o.vx, o.vy); o.vx = (o.x - z.x) / d * sp; o.vy = (o.y - z.y) / d * sp; o.homing = false; o.dmg *= .7; w.events.push({ type: 'ricochet', x: o.x, y: o.y, col: o.col }); }
+    } else if (o.state === 'wait' && st.p.divide) { o.done = true; w.events.push({ type: 'fizzle', x: o.x, y: o.y, col: o.col }); }
+  }
+  // 誘爆：自分の合図待ちの罠が、この爆発で次の段を開く
+  if (strike) for (const o of w.spells.slice()) {
+    if (o.done || o.owner !== z.owner || o.state !== 'wait' || hyp(o.x - z.x, o.y - z.y) > z.zr * 1.1) continue;
+    w.events.push({ type: 'chainBlast', x1: z.x, y1: z.y, x2: o.x, y2: o.y, col: o.col });
+    advance(w, o, o.x, o.y, Math.atan2(o.y - z.y, o.x - z.x), 'signal');
+  }
+  fieldTouch(w, z, owner, C.field.burst);
+}
+function fieldTouch(w, z, owner, k) {
+  let touched = false;
+  for (const u of w.units) {
+    if (!u.alive || hyp(u.x - z.x, u.y - z.y) > z.zr + u.r) continue;
+    if (u.id === z.owner) { if (z.st.p.grow) heal(w, u, C.mend * echo(z.st.p.grow) * k * z.mul, k < 1); continue; }
+    if (u.dashT > 0) continue;
+    touch(w, z, owner, u, k, u.x - z.x, u.y - z.y, z.x, z.y);
+    touched = true;
+  }
+  // 増：自分の壁を直す
+  if (z.st.p.grow) for (const g of w.wards) if (g.owner === z.owner && g.hp > 0 && wardDist(g, z.x, z.y) < z.zr) g.hp = Math.min(g.max, g.hp + C.mend * echo(z.st.p.grow) * k * 2);
+  if (touched && !z.dead) advance(w, z, z.x, z.y, Math.atan2(z.dy, z.dx), 'hit');
+}
+// 纏：自分の体を器にする。一つずつ（新しく纏うと前のものはほどける）
+function spawnBody(w, owner, base) {
+  for (const z of w.zones) if (z.owner === owner.id && z.kind === 'body') z.dead = true;
+  const st = base.st;
+  const z = { id: w.nextId++, owner: base.owner, col: base.col, look: base.look, kind: 'body', x: owner.x, y: owner.y, zr: owner.r + 18, t: 0, life: C.body.life * st.time,
+    tick: 0, barrier: null, matter: 'energy', hp: 0, max: 0, dead: false, hold: base.hold, linked: base.linked, cost: base.cost,
+    dx: Math.cos(owner.aim), dy: Math.sin(owner.aim), rec: base.rec, si: base.si, st, mul: base.mul, unit: base.unit, boost: base.boost, dmg: base.dmg, veil: base.veil, bindLv: base.bindLv, advanced: false, grp: null, k: base.k };
+  w.zones.push(z);
+  w.events.push({ type: 'buff', id: owner.id, kind: base.look.a, x: owner.x, y: owner.y, col: base.col });
+}
+function applyBody(w, z, u, dt) {
+  const p = z.st.p, e = k => echo(p[k]) * Math.min(1, z.mul);
+  z.x = u.x; z.y = u.y;
+  u.bodyT = .15;
+  u.bodyMotion = C.body.motion * e('motion');
+  u.bodyArmor = Math.min(C.body.maxArmor, C.body.armor * e('bind'));
+  u.bodyConvert = C.body.convert * e('convert');
+  u.bodyPhase = p.phase;
+  u.bodyZone = z.id;
+  if (p.motion) u.hasteT = .15;
+  if (p.bind) u.hardenT = .15;
+  if (p.grow) { u.vitalT = .15; if (u.hp < u.maxHp) u.hp = Math.min(u.maxHp, u.hp + C.body.regen * e('grow') * dt); }
+  if (p.convert) u.impactT = .15;
+  if (p.divide) for (const k of ['slowT', 'rootT', 'tetherT']) u[k] = Math.max(0, u[k] - C.body.cleanse * e('divide') * dt);
+  if (p.phase && u.revealT <= 0) { u.cloakT = .15; u.cloak = Math.min(1, .3 * e('phase')); }
+  // 体当たり：触れた相手に原理が作用する
+  z.tick -= dt;
+  if (z.tick > 0) return;
+  let touched = false;
+  for (const v of w.units) {
+    if (!v.alive || v === u || v.dashT > 0 || hyp(v.x - u.x, v.y - u.y) > u.r + v.r + 6) continue;
+    touch(w, z, u, v, C.body.bump, v.x - u.x, v.y - u.y, u.x, u.y);
+    touched = true;
+  }
+  if (touched) { z.tick = C.body.bumpCd; advance(w, z, u.x, u.y, u.aim, 'hit'); }
+}
+// 環：自分の周りを回る刃や城壁。飛んでくる弾を受け止め、触れた相手に作用する。一つずつ
+function spawnOrbit(w, owner, base) {
+  for (const s of w.spells) if (s.owner === owner.id && s.kind === 'orbiter') s.done = true;
+  const st = base.st, n = C.orbitCopies[st.p.grow], m = Math.sqrt(C.orbitCopies[0] / n);
+  const castle = shapeFor(st) === 'castle';
+  const size = 12 * Math.sqrt(st.size) * (castle ? 1.8 : 1);
+  const orad = owner.r + C.orbit.radius * st.size + size * 0.4;
+  const hp = C.orbit.hp * (1 + C.wall.bindHp * echo(st.p.bind)) * C.hardness[st.matter] * base.unit * base.mul * m * (castle ? 1.5 : 1);
+  const spin = C.orbit.spin * (1 + .5 * echo(st.p.motion)) * (castle ? .12 : 1);
+  const grp = { advanced: false };
+  for (let i = 0; i < n; i++) {
+    const ang = owner.aim + i / n * TAU;
+    w.spells.push({ ...base, r: base.look, radius: size, grp, mul: base.mul * m, dmg: base.dmg * m, id: w.nextId++, kind: 'orbiter', state: 'orbit',
+      sx: 0, sy: 0, x: owner.x + Math.cos(ang) * orad, y: owner.y + Math.sin(ang) * orad, tx: 0, ty: 0, t: 0, dur: 0, age: 0, wait: 0, fuseT: 0, severT: 0,
+      vx: 0, vy: 0, speed: 0, range: 0, traveled: 0, homing: false, tgt: null, retarget: 0, pierce: 0, stopAt: Infinity, returns: false, back: false,
+      life: C.orbit.life * st.time, ang, orad, hp, hitT: C.orbit.hitCd, spin, hit: [], passed: [], shape: shapeFor(st), size, max: hp });
+  }
+  w.events.push({ type: 'zone', id: 0, kind: 'blades', x: owner.x, y: owner.y, r: orad, col: base.col, rtype: 'orbit', owner: owner.id });
+}
+function bladeBroken(w, s) {
+  s.done = true;
+  w.events.push({ type: 'wardBreak', x: s.x, y: s.y, col: s.col, r: 14, matter: s.matter });
+  advance(w, s, s.x, s.y, s.ang, 'break');
+}
+function tickOrbiter(w, s, owner, dt) {
+  if (!owner || !owner.alive) { s.done = true; return; }
+  s.t += dt * (s.linked ? R.link.decayMul : 1);
+  if (s.hp <= 0) { bladeBroken(w, s); return; }
+  if (s.t > s.life) {
+    s.done = true;
+    if (!advance(w, s, s.x, s.y, s.ang, 'end')) w.events.push({ type: 'fizzle', x: s.x, y: s.y, col: s.col, r: 14 });
+    return;
+  }
+  s.ang += s.spin * dt;
+  const nx = owner.x + Math.cos(s.ang) * s.orad, ny = owner.y + Math.sin(s.ang) * s.orad;
+  if (dt > 0) { s.vx = (nx - s.x) / dt; s.vy = (ny - s.y) / dt; }
+  s.x = nx; s.y = ny;
+  s.hitT -= dt;
+  if (s.hitT <= 0) { s.hit.length = 0; s.hitT = C.orbit.hitCd; }
+  // 飛んでくる弾を受け止める（相の点が結より多い弾は抜ける）
+  for (const o of w.spells) {
+    if (o.done || o.kind !== 'proj' || o.state !== 'fly' || o.owner === s.owner || o.passed.includes(s.id)) continue;
+    if (segDist(s.x, s.y, o.x - o.vx * dt, o.y - o.vy * dt, o.x, o.y) > s.size + o.size) continue;
+    if (o.veil > s.bindLv) { o.passed.push(s.id); continue; }
+    const hit = structHit(o, s.matter);
+    s.hp -= hit; absorbInto(w, s, hit);
+    o.done = true; owner.blocked++;
+    advance(w, o, o.x, o.y, Math.atan2(o.vy, o.vx), 'hit');
+    w.events.push({ type: 'clash', x: (o.x + s.x) / 2, y: (o.y + s.y) / 2, col: s.col, col2: o.col });
+    if (s.hp <= 0) { bladeBroken(w, s); return; }
+  }
+  // 触れた相手に作用する（同じ相手は hitCd ごとに一度）
+  for (const u of w.units) {
+    if (!u.alive || u.id === s.owner || u.dashT > 0 || s.hit.includes(u.id)) continue;
+    if (hyp(u.x - s.x, u.y - s.y) > u.r + s.size || lineBlocked(w, owner.x, owner.y, s.x, s.y)) continue;
+    s.hit.push(u.id);
+    touch(w, s, owner, u, C.orbit.touch, u.x - owner.x, u.y - owner.y, owner.x, owner.y);
+    if (advance(w, s, u.x, u.y, Math.atan2(u.y - owner.y, u.x - owner.x), 'hit')) return;
+  }
+}
+function heal(w, u, amount, quiet = false) {
+  if (!u.alive || amount <= 0 || u.hp >= u.maxHp) return;
+  u.hp = Math.min(u.maxHp, u.hp + amount);
+  if (!quiet) w.events.push({ type: 'heal', id: u.id, x: u.x, y: u.y, v: amount });
 }
 
-// ═══ 11. 糸（維持費・切断・誘導・指示起爆・回収） ════════════════
+// ═══ 10. 場・壁・纏の更新 ═══════════════════════════════════════
+function updateZones(w, dt) {
+  for (let i = w.zones.length - 1; i >= 0; i--) {
+    const z = w.zones[i];
+    const owner = unitById(w, z.owner);
+    z.t += dt * (z.linked ? R.link.decayMul : 1);
+    if (!z.dead && z.t > z.life && owner && owner.alive) { z.dead = true; advance(w, z, z.x, z.y, Math.atan2(z.dy, z.dx), 'end'); }
+    if (z.dead || !owner || !owner.alive) { w.zones.splice(i, 1); w.events.push({ type: 'zoneEnd', x: z.x, y: z.y, col: z.col }); continue; }
+    if (z.kind === 'body') { applyBody(w, z, owner, dt); continue; }
+    // 動：場は照準の向きへ進む
+    if (z.st.p.motion) {
+      const v = C.field.move * echo(z.st.p.motion) * dt, nx = z.x + z.dx * v, ny = z.y + z.dy * v;
+      if (!w.rocks.some(k => hyp(k.x - nx, k.y - ny) < k.r)) { z.x = nx; z.y = ny; }
+    }
+    z.tick -= dt;
+    if (z.tick <= 0) { z.tick += C.field.tick; fieldTouch(w, z, owner, C.field.touch); }
+  }
+  for (let i = w.wards.length - 1; i >= 0; i--) {
+    const g = w.wards[i];
+    const owner = unitById(w, g.owner);
+    g.t += dt * (g.linked ? R.link.decayMul : 1);
+    if (g.hp > 0 && g.t > g.life && owner && owner.alive) { g.hp = 0; advance(w, g, g.x, g.y, Math.atan2(g.dy, g.dx), 'end'); }
+    if (g.hp <= 0 || !owner || !owner.alive) { w.wards.splice(i, 1); continue; }
+    // 動：壁は照準の向きへ進み、触れた体を押していく
+    if (g.st.p.motion) {
+      const v = C.wall.move * echo(g.st.p.motion) * dt, mx = g.dx * v, my = g.dy * v;
+      if (!w.rocks.some(k => wardDist(g, k.x - mx, k.y - my) < k.r * .9 + g.r)) { g.x += mx; g.y += my; g.ax += mx; g.ay += my; g.bx += mx; g.by += my; }
+    }
+    // 触れている相手に作用する
+    g.tick -= dt;
+    if (g.tick > 0) continue;
+    g.tick = C.wall.tick;
+    let touched = false;
+    for (const u of w.units) {
+      if (!u.alive || u.dashT > 0) continue;
+      const cp = wardPoint(g, u.x, u.y);
+      if (hyp(u.x - cp.x, u.y - cp.y) > g.r + u.r + 6) continue;
+      if (u.id === g.owner) { if (g.st.p.grow) heal(w, u, C.mend * echo(g.st.p.grow) * C.wall.touch, true); continue; }
+      touch(w, g, owner, u, C.wall.touch, u.x - cp.x, u.y - cp.y, cp.x, cp.y);
+      touched = true;
+    }
+    if (touched) advance(w, g, g.x, g.y, Math.atan2(g.dy, g.dx), 'hit');
+  }
+  for (let i = w.decoys.length - 1; i >= 0; i--) { const d = w.decoys[i]; d.t += dt; if (d.t > d.life) w.decoys.splice(i, 1); }
+}
+
+// ═══ 11. 糸（維持費・切断・誘導・合図・回収） ════════════════════
 // 糸でつながった術式は、術者から毎秒維持費を取る。距離・魔力切れで切れる（④ 糸）
 function linkedOf(w, u) {
   const out = [];
@@ -1241,7 +1232,7 @@ function updateLinks(w, dt) {
     let upkeep = 0;
     for (const o of list) {
       if (hyp(o.x - u.x, o.y - u.y) > R.link.range) { sever(w, o, 'far'); continue; }
-      upkeep += (R.link.upkeepBase + o.cost * R.link.upkeepScale) * R.link.upkeepMul / (o.low !== undefined ? 5 : 1);
+      upkeep += (R.link.upkeepBase + o.cost * R.link.upkeepScale) * R.link.upkeepMul / (o.kind === 'orbiter' ? 3 : 1);
     }
     u.mp -= upkeep * dt;
     if (u.mp <= 0) { u.mp = 0; severAll(w, u, 'mp'); }
@@ -1252,11 +1243,18 @@ function sever(w, o, why) {
   o.linked = false;
   w.events.push({ type: 'sever', x: o.x, y: o.y, owner: o.owner, why });
 }
-function severAll(w, u, why) { for (const o of linkedOf(w, u)) sever(w, o, why); }
-// 指示起爆（F）：糸でつながった「指示」の術式に合図を送る
+function severAll(w, u, why) { for (const o of linkedOf(w, u)) sever(w, o, why); for (const v of w.units) if (v.tetherOwner === u.id) v.tetherT = 0; }
+// 合図待ちの器か（F で次の段を開く）
+const waitsSignal = o => o.linked && o.st && o.st.then === 'signal' && hasNext(o);
+// 合図（F）：糸でつながった「合図で」の器が次の段を開く
 function detonate(w, u) {
   let n = 0;
-  for (const s of w.spells.slice()) if (s.owner === u.id && s.linked && s.r.trigger === 'command' && !s.done) { activate(w, s, s.x, s.y, null); n++; }
+  const all = [...w.spells, ...w.zones, ...w.wards];
+  for (const o of all) {
+    if (o.owner !== u.id || o.done || o.dead || (o.low !== undefined && o.hp <= 0) || !waitsSignal(o)) continue;
+    const dir = o.vx || o.vy ? Math.atan2(o.vy, o.vx) : o.dx !== undefined ? Math.atan2(o.dy, o.dx) : u.aim;
+    if (advance(w, o, o.x, o.y, dir, 'signal')) n++;
+  }
   if (n) w.events.push({ type: 'detonate', id: u.id, n });
   return n;
 }
@@ -1265,16 +1263,15 @@ function recall(w, u) {
   let refund = 0, n = 0;
   for (const o of linkedOf(w, u)) {
     let left;
-    const ward = o.low !== undefined, spell = o.kind === 'proj' || o.kind === 'lob' || o.kind === 'trap' || o.kind === 'orbiter';
+    const ward = o.low !== undefined, zone = o.zr !== undefined;
     if (ward) left = Math.max(0, 1 - o.t / o.life) * Math.max(0, o.hp / o.max);
-    else if (o.kind === 'orbiter') left = Math.max(0, 1 - o.t / o.life);
-    else if (spell) left = Math.max(0, 1 - o.wait / (6 * o.r.duration));
-    else left = Math.max(0, 1 - o.t / o.life);
+    else if (zone || o.kind === 'orbiter') left = Math.max(0, 1 - o.t / o.life);
+    else left = Math.max(0, 1 - o.wait / (R.wait * o.st.time));
     refund += o.cost * R.recall.refund * left;
     n++;
     if (ward) o.hp = 0;
-    else if (spell) o.done = true;
-    else o.dead = true;
+    else if (zone) o.dead = true;
+    else o.done = true;
     w.events.push({ type: 'unravel', x: o.x, y: o.y, col: o.col, owner: u.id });
   }
   if (n) { u.mp = Math.min(maxMp(u), u.mp + refund); w.events.push({ type: 'recall', id: u.id, x: u.x, y: u.y, n, refund }); }
@@ -1285,91 +1282,66 @@ function clearOwned(w, id) {
   w.zones = w.zones.filter(z => z.owner !== id);
   w.wards = w.wards.filter(g => g.owner !== id);
   w.decoys = w.decoys.filter(d => d.owner !== id);
+  for (const u of w.units) if (u.tetherOwner === id) u.tetherT = 0;
 }
 
-// ═══ 12. 命中（旧版 impact と同じ効き方） ═══════════════════════
-function hitFoe(w, s, owner, u, mul, dirx, diry) {
-  const type = s.res.type, r = s.r;
-  const ex = k => extrasCount(r, k);
-  let base = s.dmg * mul;
-  if (r.deploy === 'siphon') base *= R.siphon.dmg;
-  // 放った術は離れるほど散って弱まる（③ 散逸）
-  if (s.traveled > 0) base *= falloffMul(r, s.traveled);
-  if (u.phaseT > 0 && type !== 'void') { w.events.push({ type: 'phased', x: u.x, y: u.y }); return; }
-  if (u.spawnShield > 0) base = 0;
-  // 相の追加性質：硬化・殻による減衰を受けにくい
-  const soften = Math.min(1, ex('phase') * .5), mit = m => m + (1 - m) * soften;
-  if (ex('divide')) u.shield = 0;
-  if (u.hardenT > 0) base *= mit(.62);
-  if (u.shield > 0 && type !== 'void' && base > 0) { const a = Math.min(u.shield, base * mit(.55)); u.shield -= a; base -= a; }
-  if (u.casting) base *= 1.12;
-  if (u.markT > 0) base *= 1.2;
-  const d = hyp(dirx, diry) || 1, nx = dirx / d, ny = diry / d;
-  const knock = (u.hardenT > 0 ? .5 : 1);
-  const push = v => { u.vx += nx * v * knock; u.vy += ny * v * knock; };
-  let dmg = 0;
-  switch (type) {
-    case 'tether': { dmg = base * .6; root(u, R.bind.tether); const tx = owner.x - u.x, ty = owner.y - u.y, td = hyp(tx, ty) || 1; u.vx += tx / td * 220 * knock; u.vy += ty / td * 220 * knock; break; }
-    case 'poison': dmg = base * .35; u.poisonT = Math.max(u.poisonT, 4.5 * r.duration); u.poisonDps = Math.max(u.poisonDps, s.dmg * R.poisonDps); u.poisonBy = owner.id; slow(u, .4, 1.4); break;
-    case 'root': dmg = base * .3; root(u, R.bind.root * r.duration); break;
-    case 'shock': dmg = base; push(390 * D.forms[r.form].power); break;
-    case 'bloom': dmg = base * .25; heal(w, owner, base * .5); owner.mp = Math.min(maxMp(owner), owner.mp + base * .5); break;
-    case 'prison': dmg = base * .35; root(u, R.bind.prison * r.duration); u.shield = 0; break;
-    case 'void': dmg = base; owner.phaseT = Math.max(owner.phaseT, .5); break;
-    case 'blink': dmg = base * .85; break;
-    case 'corrode': { dmg = base * .85; const m = Math.min(u.mp, base * .35); u.mp -= m; owner.mp = Math.min(maxMp(owner), owner.mp + m * .7); break; }
-    case 'counter': dmg = base * .65; owner.reflectT = Math.max(owner.reflectT, .6); break;
-    case 'cascade': dmg = base * .72; chain(w, s, owner, u, base * .5); break;
-    case 'wall': dmg = base * .15; u.vx *= .2; u.vy *= .2; break;
-    case 'rend': dmg = base * 1.05; u.shield = 0; slow(u, .3, .5); break;
-    case 'unmake': dmg = base * .8; u.shield = 0; root(u, .5); break;
-    case 'swarm': dmg = base * .5; slow(u, .3, .9); break;
-    case 'scan': dmg = base * .35; u.markT = Math.max(u.markT, 6); break;
-    case 'shift': { dmg = base * .45; const m = Math.min(u.mp, base * .5); u.mp -= m; owner.mp = Math.min(maxMp(owner), owner.mp + m * .8); break; }
-    case 'well': dmg = base * .1; break;
-    case 'bolt': dmg = base * .95; push(170); break;
-    case 'solid': dmg = base * .3; slow(u, .35, .8); break;
-    case 'sunder': dmg = base * .9; u.shield = 0; u.hardenT = 0; break;
-    case 'drain': {
-      // 吸奪：魔力を奪って自分の魔力にし、奪った分だけ自分の構造も埋める
-      dmg = base * .55;
-      const m = Math.min(u.mp, base * 1.1); u.mp -= m; owner.mp = Math.min(maxMp(owner), owner.mp + m * .8);
-      heal(w, owner, dmg * .5);
-      if (u.mass > 0) { const ms = Math.min(u.mass, base * .05); u.mass -= ms; refreshBody(u); gain(w, owner, ms); }
-      break;
-    }
-    case 'mend': case 'veil': dmg = base * .28; break;
-    case 'trench': dmg = base * .35; slow(u, .3, .5); break;
-    case 'mirror': case 'bulwark': dmg = base * .2; break;
-    default: dmg = base * .65; slow(u, .3, .7);
+// ═══ 12. 触れる（原理が相手に効く）と打撃 ═══════════════════════
+// s：触れた器（弾・線・壁・場・纏・刃）。k：器の倍率。(cx, cy)：器の中心（引く先・つなぐ先）
+//  分：壊す（打撃・殻を剥がす・2点で糸を断つ）  動：押す・引く・回す  結：中心へつなぐ（3点で足止め）
+//  換：魔力を奪う  相：印を付ける  増：相手には効かない（自分の紋を直す）
+function touch(w, s, owner, u, k, dirx, diry, cx, cy) {
+  if (u.spawnShield > 0 || u.dashT > 0 || !u.alive) return;
+  const st = s.st, p = st.p, e = key => echo(p[key]);
+  owner.revealT = Math.max(owner.revealT, 1.4);
+  // 打撃は s.dmg（魔素の重さ・節点・複製の倍率を含む）× 器の倍率 × 遠くでの衰え。副作用の強さも同じ割合で弱まる
+  const fall = s.traveled ? falloffMul(st, s.traveled) : 1, strength = k * s.mul * fall;
+  let dmg = s.dmg * k * fall * touchPower(st);
+  if (u.markT > 0) dmg *= 1 + C.dmg.mark * u.markLv;
+  if (u.casting) dmg *= 1.1;
+  // 動：押す・引く・回す。弾・線・纏・環の中心は術者、壁は触れた面、場は中心
+  let nx = dirx, ny = diry;
+  if (st.force === 'pull') { nx = cx - u.x; ny = cy - u.y; }
+  const d = hyp(nx, ny) || 1; nx /= d; ny /= d;
+  if (st.force === 'spin') { const t = nx; nx = -ny; ny = t; }
+  const knock = C.knock * e('motion') * Math.min(1.2, strength) + (s.matter === 'solid' && st.vessel !== 'body' ? C.solidKnock * Math.min(1, strength) : 0);
+  if (knock > 0) { u.vx += nx * knock; u.vy += ny * knock; }
+  // 結：器の中心へつなぐ（弾・線・纏・環は術者につながる）
+  if (p.bind) {
+    const T = C.tether, owned = ['bolt', 'ray', 'body', 'orbit'].includes(st.vessel);
+    u.tetherT = Math.max(u.tetherT, (T.time + T.timePer * e('bind')) * Math.min(1, strength + .3));
+    u.tetherX = cx; u.tetherY = cy; u.tetherTo = owned ? owner.id : 0; u.tetherOwner = owner.id;
+    u.tetherLength = Math.max(T.min, T.length - T.perLevel * p.bind); u.tetherForce = T.force + T.forcePer * e('bind'); u.tetherPull = T.pull + T.pullPer * e('bind');
+    // 遠くでつながれても、つながった距離より少し離れるまでは切れない
+    u.tetherBreak = Math.max(u.tetherLength + T.slack, hyp(u.x - cx, u.y - cy) + T.slack * .5);
+    slow(u, Math.min(.6, T.slow * e('bind')), .6 + .3 * e('bind'));
+    if (p.bind >= 3) root(u, T.root * Math.min(1, strength + .3));
   }
-  // 固体は重く、当たった相手を押し込む
-  if (r.matter === 'solid' && dmg > 0) push(matterOf(r).knock);
-  if (shapeOf(r).knock && dmg > 0 && s.kind !== 'orbiter') push(shapeOf(r).knock);
-  // 追加性質の副作用（主効果のあとに上乗せ）
-  if (ex('motion')) push(150 * ex('motion'));
-  if (ex('bind')) { slow(u, Math.min(.6, .3 * ex('bind')), 1.2); if (ex('bind') >= 2) root(u, .6); }
-  if (ex('convert')) { const m = Math.min(u.mp, 3 * r.power * ex('convert')); u.mp -= m; owner.mp = Math.min(maxMp(owner), owner.mp + m * .5); }
-  if (ex('grow') && !s.frag) for (let k = 0; k < ex('grow'); k++) spawnShard(w, s, u.x, u.y, w.rng() * TAU, .3);
-  // 断ち切る性質の術式は、相手の糸も断つ
-  if (['rend', 'sunder', 'unmake'].includes(type)) severAll(w, u, 'cut');
-  if (!u.alive) return;
+  // 分：殻を剥がし、2点以上で糸を断つ
+  if (p.divide >= 2 && strength >= .3) severAll(w, u, 'cut');
+  // 換：魔力を奪う
+  if (p.convert) {
+    const taken = Math.min(u.mp, C.drain * e('convert') * strength);
+    u.mp -= taken; owner.mp = Math.min(maxMp(owner), owner.mp + taken * C.drainKeep);
+    if (taken > 0) w.events.push({ type: 'drain', x: u.x, y: u.y, owner: owner.id, col: s.col, v: taken });
+  }
+  // 相：印を付ける（隠れられず、打撃が重くなる）
+  if (p.phase) { u.markT = Math.max(u.markT, C.markTime + e('phase')); u.markLv = Math.max(u.markLv, p.phase); u.revealT = Math.max(u.revealT, u.markT); }
   damage(w, u, dmg, owner);
-  w.events.push({ type: 'hit', x: u.x - nx * u.r * 0.6, y: u.y - ny * u.r * 0.6, dmg, col: s.col, rtype: type, a: r.a, b: r.b, shape: visualShapeOf(r), target: u.id, owner: owner.id, vx: nx, vy: ny, shielded: dmg <= 0, matter: r.matter });
+  w.events.push({ type: 'hit', x: u.x - nx * u.r * 0.6, y: u.y - ny * u.r * 0.6, dmg, col: s.col, rtype: st.vessel, a: s.look.a, b: s.look.b,
+    shape: shapeFor(st), target: u.id, owner: owner.id, vx: nx, vy: ny, shielded: dmg <= 0, matter: s.matter });
 }
 function root(u, t) { u.rootT = Math.max(u.rootT, t); }
 function slow(u, amt, t) { u.slowAmt = Math.max(u.slowAmt, amt); u.slowT = Math.max(u.slowT, t); }
-// 連鎖波：いちばん近い別の相手へ跳ぶ
-function chain(w, s, owner, from, dmg) {
-  let best = null, bd = 320;
-  for (const u of w.units) { if (!u.alive || u === owner || u === from) continue; const d = hyp(u.x - from.x, u.y - from.y); if (d < bd) { bd = d; best = u; } }
-  if (!best) return;
-  w.events.push({ type: 'chain', x1: from.x, y1: from.y, x2: best.x, y2: best.y, col: s.col });
-  damage(w, best, dmg, owner);
-}
 function damage(w, u, dmg, source) {
   if (!u.alive || dmg <= 0) return;
-  if (source && source.id !== u.id) source.dealt += dmg;
+  dmg *= 1 - u.bodyArmor;
+  u.revealT = Math.max(u.revealT, 1.4);
+  const foe = source && source.id !== u.id;
+  // 纏の換：受けた打撃の一部を魔力へ
+  if (foe && u.bodyConvert > 0) { const a = dmg * u.bodyConvert; dmg -= a; u.mp = Math.min(maxMp(u), u.mp + a * .8); }
+  if (foe) { source.dealt += dmg; source.revealT = Math.max(source.revealT, 1.4); }
+  // 纏の「触れたら」：打たれた瞬間に次の段を開く
+  if (foe) { const z = w.zones.find(o => o.kind === 'body' && o.owner === u.id && !o.dead); if (z) advance(w, z, u.x, u.y, Math.atan2(source.y - u.y, source.x - u.x), 'hit'); }
   if (u.dummy) {
     u.hp -= dmg; u.combatT = 0; u.hurtT = 0.09;
     if (u.hp <= 0) { u.hp = u.maxHp; w.events.push({ type: 'dummyReset', id: u.id, x: u.x, y: u.y }); }
@@ -1380,7 +1352,7 @@ function damage(w, u, dmg, source) {
   u.hp -= dmg;
   u.combatT = 0;
   u.hurtT = 0.09;
-  if (source && source.id !== u.id) { u.lastHitBy = source.id; u.lastHitT = w.t; }
+  if (foe) { u.lastHitBy = source.id; u.lastHitT = w.t; }
   if (u.hp <= 0) kill(w, u);
 }
 
@@ -1427,7 +1399,6 @@ function updateRespawns(w) {
 function step(w, dt) {
   dt = Math.min(dt, 0.05);
   w.t += dt;
-  markPerfect(w);
   for (const u of w.units) if (u.alive && u.bot) botThink(w, u, dt);
   for (const u of w.units) if (u.alive && u.dummy) dummyThink(w, u, dt);
   for (const u of w.units) if (u.alive) updateUnit(w, u, dt);
@@ -1442,30 +1413,28 @@ function step(w, dt) {
 }
 function updateUnit(w, u, dt) {
   const ix = u.input;
+  for (const k of ['bodyT', 'cloakT', 'revealT', 'impactT', 'tetherT', 'hasteT', 'hardenT', 'vitalT']) u[k] = Math.max(0, u[k] - dt);
+  // 纏がほどけたら、体に宿した原理も消える
+  if (u.bodyT <= 0) { u.bodyMotion = 0; u.bodyArmor = 0; u.bodyConvert = 0; u.bodyPhase = 0; u.bodyZone = 0; }
+  if (u.tetherT > 0) {
+    // 術者につながれていれば、つなぐ先は術者と一緒に動く
+    const caster = unitById(w, u.tetherOwner), anchor = u.tetherTo ? unitById(w, u.tetherTo) : null;
+    if (anchor) { u.tetherX = anchor.x; u.tetherY = anchor.y; }
+    const d = hyp(u.x - u.tetherX, u.y - u.tetherY);
+    if (!caster || !caster.alive || (u.tetherTo && (!anchor || !anchor.alive)) || d > u.tetherBreak || u.dashT > 0) u.tetherT = 0;
+  }
   for (let i = 0; i < 4; i++) u.slotCd[i] = Math.max(0, u.slotCd[i] - dt);
-  u.dodgeCd = Math.max(0, u.dodgeCd - dt * (u.hasteT > 0 ? 1.6 : 1));
+  u.dodgeCd = Math.max(0, u.dodgeCd - dt * (1 + u.bodyMotion * 3));
   u.spawnShield = Math.max(0, u.spawnShield - dt);
   u.dashT = Math.max(0, u.dashT - dt); u.hurtT = Math.max(0, u.hurtT - dt);
-  u.phaseT = Math.max(0, u.phaseT - dt); u.reflectT = Math.max(0, u.reflectT - dt);
-  u.hasteT = Math.max(0, u.hasteT - dt); u.hardenT = Math.max(0, u.hardenT - dt); u.vitalT = Math.max(0, u.vitalT - dt);
+  u.phaseT = Math.max(0, u.phaseT - dt);
   u.rootT = Math.max(0, u.rootT - dt); u.markT = Math.max(0, u.markT - dt);
+  if (u.markT <= 0) u.markLv = 0;
   u.slowT -= dt; if (u.slowT <= 0) u.slowAmt = 0;
   u.combatT += dt;
-  if (u.aegis) {
-    u.mp -= R.perfect.drain * dt;
-    if (u.mp <= 0) { u.mp = 0; dispelPerfect(w, u, 'mp'); }
-  } else {
-    // 魔力は勝手には戻らない。節点の中では湧き出し、修練場では常に戻る
-    const regen = w.room.practice ? W.mp.practice : u.node >= 0 ? W.node.regen : W.mp.regen;
-    u.mp = Math.min(maxMp(u), u.mp + regen * dt);
-  }
-  if (u.poisonT > 0) {
-    u.poisonT -= dt;
-    damage(w, u, u.poisonDps * dt, unitById(w, u.poisonBy));
-    if (!u.alive) return;
-    if (u.poisonT <= 0) u.poisonDps = 0;
-  }
-  if (u.vitalT > 0) u.hp = Math.min(u.maxHp, u.hp + u.maxHp * 0.05 * dt);
+  // 魔力は勝手には戻らない。節点の中では湧き出し、修練場では常に戻る
+  const regen = w.room.practice ? W.mp.practice : u.node >= 0 ? W.node.regen : W.mp.regen;
+  u.mp = Math.min(maxMp(u), u.mp + regen * dt);
   if (u.mass > W.decay.floor) { u.mass -= (u.mass - W.decay.floor) * W.decay.rate * (1 + u.mass / W.decay.soft) * dt; refreshBody(u); }
   if (u.combatT > W.regen.delay) u.hp = Math.min(u.maxHp, u.hp + u.maxHp * W.regen.perSec * dt);
   // 節点に出入りした（入った節点の原理の術が強まる）
@@ -1474,14 +1443,11 @@ function updateUnit(w, u, dt) {
   if (node !== u.node) { u.node = node; if (!u.bot) w.events.push({ type: 'node', id: u.id, node, k: node >= 0 ? w.nodes[node].k : null }); }
   const center = hyp(u.x, u.y) < W.center.r;
   if (center !== u.center) { u.center = center; if (!u.bot && center) w.events.push({ type: 'center', id: u.id }); }
-  // 狙い・持ち替え・詠唱・連射
+  // 狙い・持ち替え・詠唱
   u.aim = ix.aim;
   if (ix.slot >= 0 && ix.slot < 4) u.sel = ix.slot;
   if (u.casting) { u.casting.t += dt; if (u.casting.t >= u.casting.total) release(w, u); }
-  else if (u.queue) {
-    u.queue.t -= dt;
-    if (u.queue.t <= 0) { fire(w, u, u.spells[u.queue.slot], u.queue.cost); if (--u.queue.left <= 0) u.queue = null; else u.queue.t = R.rapidGap; }
-  } else if (ix.cast) beginCast(w, u, u.sel);
+  else if (ix.cast) beginCast(w, u, u.sel);
   if (!u.alive) return;
   if (ix.detonate) { ix.detonate = false; detonate(w, u); }
   if (ix.recall) { ix.recall = false; recall(w, u); }
@@ -1499,20 +1465,40 @@ function updateUnit(w, u, dt) {
   let mx = ix.mx, my = ix.my;
   const m = hyp(mx, my);
   if (m > 1) { mx /= m; my /= m; }
-  const speed = speedOf(u) * (1 - u.slowAmt) * (u.aegis ? 1 - R.perfect.slow : 1) * (u.casting ? W.cast.slowWhileChant : 1) * (u.hasteT > 0 ? 1.42 : 1) * (u.rootT > 0 ? 0 : 1);
+  const speed = speedOf(u) * (1 + u.bodyMotion) * (1 - u.slowAmt) * (u.casting ? W.cast.slowWhileChant : 1) * (u.rootT > 0 ? 0 : 1);
   if (u.dashT <= 0) {
     const k = Math.min(1, dt * W.body.accel);
     u.vx += (mx * speed - u.vx) * k;
     u.vy += (my * speed - u.vy) * k;
   }
-  u.x += u.vx * dt; u.y += u.vy * dt;
-  // 岩と違う紋の結界に押し戻される（塹壕は体を止めない）
-  const push = (cx, cy, r) => {
-    const dx = u.x - cx, dy = u.y - cy, d = hyp(dx, dy), min = r + u.r;
-    if (d < min && d > 0) { u.x = cx + dx / d * min; u.y = cy + dy / d * min; const vn = (u.vx * dx + u.vy * dy) / d; if (vn < 0) { u.vx -= vn * dx / d; u.vy -= vn * dy / d; } }
+  if (u.tetherT > 0 && u.dashT <= 0) {
+    const dx = u.tetherX - u.x, dy = u.tetherY - u.y, d = hyp(dx, dy) || 1;
+    const f = Math.min(u.tetherPull, Math.max(0, d - u.tetherLength) * u.tetherForce);
+    u.vx += dx / d * f * dt; u.vy += dy / d * f * dt;
+  }
+  // 回避でも壁を飛び越さないように、移動の途中で接触を調べる
+  const steps = Math.max(1, Math.ceil(hyp(u.vx, u.vy) * dt / Math.max(4, u.r * 0.5)));
+  const push = (cx, cy, r, px, py, fx = 1, fy = 0) => {
+    let dx = u.x - cx, dy = u.y - cy;
+    const d = hyp(dx, dy), min = r + u.r;
+    if (d >= min) return;
+    // 壁の中心に設置された体も押し出す。進入した側を優先する
+    if (d === 0) { dx = px - cx; dy = py - cy; if (hyp(dx, dy) === 0) { dx = fx; dy = fy; } }
+    const n = hyp(dx, dy), nx = dx / n, ny = dy / n;
+    u.x = cx + nx * min; u.y = cy + ny * min;
+    const vn = u.vx * nx + u.vy * ny;
+    if (vn < 0) { u.vx -= vn * nx; u.vy -= vn * ny; }
   };
-  for (const k of w.rocks) push(k.x, k.y, k.r * 0.9);
-  for (const g of w.wards) if (g.owner !== u.id && !g.low && g.hp > 0) { const p = wardPoint(g, u.x, u.y); push(p.x, p.y, g.r); }
+  for (let i = 0; i < steps; i++) {
+    const px = u.x, py = u.y;
+    u.x += u.vx * dt / steps; u.y += u.vy * dt / steps;
+    for (const k of w.rocks) push(k.x, k.y, k.r * 0.9, px, py);
+    // 纏の相の点が壁の結より多ければ、壁をすり抜けて歩ける（岩は抜けない）
+    for (const g of w.wards) if (!g.low && g.hp > 0 && u.bodyPhase <= g.bindLv) {
+      const p = wardPoint(g, u.x, u.y);
+      push(p.x, p.y, g.r, px, py, g.len ? g.by - g.ay : 1, g.len ? g.ax - g.bx : 0);
+    }
+  }
   // 結界の外：構造が崩れる。さらに外へは出られない
   const dc = hyp(u.x, u.y);
   if (dc > w.R) {
@@ -1521,21 +1507,6 @@ function updateUnit(w, u, dt) {
     const lim = w.R + W.edge.hardMargin;
     if (dc > lim) { u.x *= lim / dc; u.y *= lim / dc; }
   }
-}
-// 完全の結界（領域・柱・周回の刃）を張っている術者に印を付ける
-function markPerfect(w) {
-  for (const u of w.units) u.aegis = false;
-  const mark = id => { const u = unitById(w, id); if (u) u.aegis = true; };
-  for (const z of w.zones) if (z.matter === 'perfect' && z.barrier && !z.dead) mark(z.owner);
-  for (const g of w.wards) if (g.matter === 'perfect' && g.hp > 0) mark(g.owner);
-  for (const s of w.spells) if (s.matter === 'perfect' && s.kind === 'orbiter' && !s.done) mark(s.owner);
-}
-function dispelPerfect(w, u, why) {
-  for (const z of w.zones) if (z.owner === u.id && z.matter === 'perfect') z.dead = true;
-  for (const g of w.wards) if (g.owner === u.id && g.matter === 'perfect') g.hp = 0;
-  for (const s of w.spells) if (s.owner === u.id && s.matter === 'perfect' && s.kind === 'orbiter') s.done = true;
-  u.aegis = false;
-  w.events.push({ type: 'aegisEnd', id: u.id, x: u.x, y: u.y, why });
 }
 // 体どうしは重ならない（軽いほうが押される）
 function separate(w) {
@@ -1556,42 +1527,41 @@ function separate(w) {
 }
 
 // ═══ 15. Botの思考 ══════════════════════════════════════════════
-// 術の役割：どんな場面で使うかを、術式の組み立てから決める
+// 術の役割：どんな場面で使うかを、1段目の器と原理、つながる段から決める
 function spellRole(r) {
-  const t = recipeResult(r).type;
-  if (r.behavior === 'orbit' && r.b === 'none' && ['motion', 'bind', 'grow'].includes(r.a)) return { motion: 'haste', bind: 'harden', grow: 'heal' }[r.a];
-  // 完全の結界は切り札。周回の刃・城壁とエネルギーの結界は、身を守る術
-  if (r.matter === 'perfect') return 'aegis';
-  if (r.behavior === 'orbit' && r.matter === 'solid') return 'guard';
-  if (['bulwark', 'shift', 'counter'].includes(t) && r.behavior === 'orbit') return 'guard';
-  if (['solid', 'wall', 'trench'].includes(t)) return 'ward';
-  if (['mend', 'bloom'].includes(t)) return 'heal';
-  if (r.trigger === 'command') return 'remote';
-  if (r.behavior === 'sow' || r.trigger === 'proximity') return 'trap';
-  if (r.behavior === 'beam') return 'beam';
-  // 拘束（慣性拘束・根絡・位相牢）は、大技へつなぐための術
-  if (['tether', 'root', 'prison'].includes(t)) return 'bind';
-  // 吸奪・吸魔：魔力が減ったときに相手から奪う
-  if (t === 'drain' || r.deploy === 'siphon') return 'drain';
-  if (t === 'mirror') return 'decoy';
-  if (r.behavior === 'homing') return 'homing';
-  if (t === 'blink') return 'blink';
-  if (t === 'well') return 'well';
-  if (r.behavior === 'lob' || ['ring', 'field'].includes(r.form)) return 'area';
+  const s0 = r.stages[0], p = s0.p, v = s0.vessel, chain = r.stages.length > 1;
+  if (v === 'body') return p.grow ? 'heal' : p.phase ? 'decoy' : p.motion && p.motion >= p.bind ? 'haste' : 'harden';
+  if (v === 'orbit') return 'guard';
+  if (v === 'wall') return 'ward';
+  if (v === 'ray') return 'beam';
+  if (chain && s0.then === 'signal') return 'remote';
+  if (v === 'field') {
+    if (chain && s0.then === 'hit' && p.phase) return 'trap';
+    if (p.bind && !p.divide && !p.motion) return 'guard';
+    if (p.grow && !p.divide) return 'heal';
+    if (p.convert && !p.divide) return 'drain';
+    return 'area';
+  }
+  // 弾：放物や、触れたら円を開く弾は範囲の術
+  if (s0.path === 'arc' || (chain && r.stages[1].vessel === 'field')) return 'area';
+  if (s0.path === 'seek') return p.bind >= 2 ? 'bind' : p.convert > p.divide ? 'drain' : 'homing';
+  if (p.bind >= 2) return 'bind';
+  if (p.convert > p.divide) return 'drain';
   return 'shot';
 }
+// 自分の足元に開く術（1段目の円は必ず足元。動があれば足元から流れていく）
+const selfCast = r => r.stages[0].vessel === 'field';
 // 術が相手に届く距離（Bot が射程の外から撃たないために）
 function spellReach(r) {
-  const bh = D.behaviors[r.behavior], sh = shapeOf(r), rad = D.forms[r.form].radius * (r.deploy === 'burst' ? 1.5 : 1);
-  switch (r.behavior) {
-    case 'project': case 'homing': case 'relay': return bh.range * sh.range * (sh.returns ? 0.5 : 0.85);
-    case 'beam': return bh.range * 0.95;
-    case 'lob': return bh.range + rad * 0.5;
-    case 'sow': return bh.range + rad * 0.5;
-    case 'drop': return rad * 0.9;
-    case 'orbit': return rad * 0.7 + R.orbiter.radius[r.form] + 40;
+  const s0 = r.stages[0], V = C.vessels;
+  switch (s0.vessel) {
+    case 'bolt': return s0.path === 'arc' ? 600 * s0.time : V.bolt.range * s0.time * (s0.path === 'return' ? .5 : .85);
+    case 'ray': return V.ray.range * (1 + C.ray.motionRange * echo(s0.p.motion)) * .95;
+    case 'wall': return wallReach(s0) + C.wall.half * s0.size;
+    case 'field': return C.field.radius * s0.size + C.field.move * echo(s0.p.motion) * C.field.life * s0.time * .5;
+    case 'orbit': return C.orbit.radius * s0.size + 60;
   }
-  return 400;
+  return 0;
 }
 function makeBrain(w, school) {
   const r = w.rng;
@@ -1607,7 +1577,7 @@ function lineBlocked(w, ax, ay, bx, by, self) {
   const dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy || 1;
   const test = (cx, cy, r) => { const t = clamp(((cx - ax) * dx + (cy - ay) * dy) / L2, 0, 1); return hyp(ax + dx * t - cx, ay + dy * t - cy) < r; };
   for (const k of w.rocks) if (test(k.x, k.y, k.r * 0.9)) return true;
-  for (const g of w.wards) if (g.owner !== self && !g.low && g.hp > 0 && wardSamples(g).some(p => test(p.x, p.y, g.r))) return true;
+  for (const g of w.wards) if (g.hp > 0 && wardSamples(g).some(p => test(p.x, p.y, g.r))) return true;
   return false;
 }
 // 役割に合い、相手まで届く術の番号（容量を超える術はたまにしか使わない）
@@ -1615,7 +1585,11 @@ function slotFor(w, u, role, dist = 0) {
   for (let i = 0; i < 4; i++) {
     const r = u.spells[i];
     if (spellRole(r) !== role || u.slotCd[i] > 0) continue;
-    if (u.mp < recipeCost(r, u) + 4) continue;
+    // 纏と環は一つずつ。続いている間は唱えなおさない
+    const v = r.stages[0].vessel;
+    if (v === 'body' && w.zones.some(z => z.owner === u.id && z.kind === 'body' && !z.dead && z.life - z.t > .7)) continue;
+    if (v === 'orbit' && w.spells.some(s => s.owner === u.id && s.kind === 'orbiter' && !s.done && s.life - s.t > .7)) continue;
+    if (u.mp < recipeCost(r) + 4) continue;
     if (dist > spellReach(r)) continue;
     if (misfireChance(r, u) > 0 && w.rng() > 0.05) continue;
     return i;
@@ -1626,7 +1600,7 @@ function botThink(w, u, dt) {
   const b = u.brain, ix = u.input, r = w.rng;
   const tgt = b.target && unitById(w, b.target);
   // 狙いは毎フレーム：相手の動きを先読みし、腕前に応じてぶれる
-  if (tgt && tgt.alive) {
+  if (tgt && tgt.alive && visibleTo(u, tgt)) {
     const d = hyp(tgt.x - u.x, tgt.y - u.y), lead = d / 760 * (0.4 + b.skill * 0.7);
     const px = tgt.x + tgt.vx * lead, py = tgt.y + tgt.vy * lead;
     const want = Math.atan2(py - u.y, px - u.x);
@@ -1640,7 +1614,7 @@ function botThink(w, u, dt) {
   // 周りを見る
   let near = null, nd = 1e9, pickU = null, ps = -1;
   for (const o of w.units) {
-    if (!o.alive || o === u) continue;
+    if (!o.alive || !visibleTo(u, o) || o === u) continue;
     const d = hyp(o.x - u.x, o.y - u.y);
     if (d > 1000) continue;
     if (d < nd) { nd = d; near = o; }
@@ -1654,7 +1628,7 @@ function botThink(w, u, dt) {
   let mx = 0, my = 0, cast = false, slot = 0;
   // 巨体には近づかない（よほど好戦的で、相手が弱っていれば別）
   let giant = null;
-  for (const o of w.units) if (o.alive && o !== u && o.mass > u.mass * 2.5 + 60 && hyp(o.x - u.x, o.y - u.y) < 480 + o.r && !(b.aggr > 0.7 && hpR > 0.7 && o.hp < o.maxHp * 0.5)) { giant = o; break; }
+  for (const o of w.units) if (o.alive && o !== u && visibleTo(u, o) && o.mass > u.mass * 2.5 + 60 && hyp(o.x - u.x, o.y - u.y) < 480 + o.r && !(b.aggr > 0.7 && hpR > 0.7 && o.hp < o.maxHp * 0.5)) { giant = o; break; }
   if (giant) { near = giant; nd = hyp(giant.x - u.x, giant.y - u.y); }
   // 飛んでくる術式・光線の構え
   let threat = null;
@@ -1666,24 +1640,23 @@ function botThink(w, u, dt) {
     if ((dx * s.vx + dy * s.vy) / (d * sp) > 0.86) { threat = s; break; }
   }
   const beamAim = !threat && w.units.some(o => o.alive && o !== u && o.casting && spellRole(o.spells[o.casting.slot]) === 'beam' && hyp(o.x - u.x, o.y - u.y) < 900 && Math.abs(angDiff(o.aim, Math.atan2(u.y - o.y, u.x - o.x))) < 0.12);
-  // 自分の指示式の近くに敵が来たら起爆、魔力が尽きたら糸を回収
-  for (const s of w.spells) if (s.owner === u.id && s.linked && s.r.trigger === 'command' && !s.done && foeNear(w, s, s.radius * 0.8)) { ix.detonate = true; break; }
+  // 自分の合図待ちの器の近くに敵が来たら合図、魔力が尽きたら糸を回収
+  for (const o of [...w.spells, ...w.zones, ...w.wards]) if (o.owner === u.id && !o.done && !o.dead && waitsSignal(o) && foeNear(w, o, o.st.vessel === 'field' ? o.zr : 110)) { ix.detonate = true; break; }
   if (u.mp < 12 && linkedOf(w, u).length) ix.recall = true;
-  // 完全結界を張った直後は、しばらく唱えずに守りを固める
-  const holding = u.aegis && w.t - b.aegisAt < 2 + b.skill * 1.5;
   const use = (role, px, py, dist = 0) => {
     const i = slotFor(w, u, role, dist);
     if (i < 0) return false;
     slot = i; cast = true;
+    // 結界・回復・吸奪の場は自分の足元に開く
+    if (selfCast(u.spells[i]) && !u.spells[i].stages[0].p.motion) { px = u.x; py = u.y; }
     if (px !== undefined) { ix.tx = px; ix.ty = py; b.placing = true; }
-    if (role === 'aegis') b.aegisAt = w.t;
     return true;
   };
   if (near && ((nd < 620 && hpR < b.flee) || near === giant)) {
     b.mode = 'flee'; b.target = near.id;
     mx = u.x - near.x; my = u.y - near.y;
-    // 逃げながら：切り札の完全結界・回復・加速・足止め・罠・囮・壁
-    const acted = ((threat || beamAim) && hpR < 0.4 && use('aegis'))
+    // 逃げながら：守り・回復・加速・足止め・罠・隠れ身・壁
+    const acted = ((threat || beamAim) && hpR < 0.4 && use('guard'))
       || (hpR < 0.5 && use('heal', u.x, u.y))
       || use('haste')
       || (nd < 460 && use('bind', near.x, near.y, nd))
@@ -1702,7 +1675,7 @@ function botThink(w, u, dt) {
     let refuel = null, rs = 0;
     if (dry) for (const m of motesNear(w, u.x, u.y, 420)) { const md = hyp(m.x - u.x, m.y - u.y), sc = m.v / (md + 40); if (sc > rs) { rs = sc; refuel = m; } }
     // 流派の間合いを保ち、横へ回り込む。刃や城壁を回している間は、懐へ踏み込む
-    const blades = w.spells.some(o => o.owner === u.id && o.kind === 'orbiter' && !o.done && o.orbMul >= 0.5);
+    const blades = w.spells.some(o => o.owner === u.id && o.kind === 'orbiter' && !o.done);
     const keep = blades ? Math.min(b.keep, 70) : b.keep;
     const radial = clamp((d - keep) / 150, -1, 1);
     if (r() < 0.05) b.strafe *= -1;
@@ -1711,14 +1684,14 @@ function botThink(w, u, dt) {
     if (refuel) { const fx = refuel.x - u.x, fy = refuel.y - u.y, fd = hyp(fx, fy) || 1; mx = fx / fd * 1.4 + mx * 0.4; my = fy / fd * 1.4 + my * 0.4; }
     const blocked = lineBlocked(w, u.x, u.y, pickU.x, pickU.y, u.id);
     const low = pickU.hp < pickU.maxHp * 0.3;
-    const held = pickU.rootT > 0.25 || pickU.slowAmt > 0.3;
+    const held = pickU.rootT > 0.25 || pickU.tetherT > .4 || pickU.slowAmt > 0.3;
     const px = ix.tx, py = ix.ty;
     // 場面に合う術を選ぶ（上ほど優先）
     let chosen = false;
     const T = (cond, fn) => { if (!chosen && cond) chosen = !!fn(); };
-    // 守り：弾や光線が来る。弱っていれば切り札の完全結界
+    // 守り：弾や光線が来る
     T((threat || beamAim) && w.t - b.lastGuard > 2 && r() < 0.35 + b.skill * 0.6, () => {
-      const ok = (hpR < 0.45 && use('aegis')) || use('guard') || use('harden') || use('ward', u.x + dx / d * 90, u.y + dy / d * 90) || use('decoy', u.x, u.y);
+      const ok = use('guard') || use('harden') || use('ward', u.x + dx / d * 90, u.y + dy / d * 90) || use('decoy', u.x, u.y);
       if (ok) b.lastGuard = w.t;
       return ok;
     });
@@ -1728,9 +1701,9 @@ function botThink(w, u, dt) {
     T(d < 600 && (closing ? r() < 0.7 : r() < 0.3), () => use('trap', u.x + dx * 0.6, u.y + dy * 0.6, d) || use('remote', px, py, d));
     // 連携：拘束・鈍化した相手には、重い一撃（光線・範囲・得意の弾）を叩き込む
     T(held, () => use('beam', undefined, undefined, d) || use('area', pickU.x, pickU.y, d) || use('remote', pickU.x, pickU.y, d) || use('shot', undefined, undefined, d));
-    // 間合いの近い流派：刃を回してから、転位で一気に詰める
-    T(b.keep < 200 && d < 420 && !blades && r() < 0.6, () => use('guard'));
-    T(b.keep < 200 && blades && d > 220 && d < 620 && r() < 0.5, () => use('blink', undefined, undefined, d));
+    // 間合いの近い流派：刃を回してから、足を速めて一気に詰める
+    T(b.keep < 320 && d < 480 && !blades && r() < 0.6, () => use('guard'));
+    T(b.keep < 320 && d > b.keep + 80 && d < 700 && r() < 0.5, () => use('haste'));
     // 近い：刃や城壁を回す・足止め・吸魔の場・範囲
     T(d < 280 && r() < 0.55, () => use('guard', undefined, undefined, d) || use('drain', px, py, d) || use('bind', px, py, d) || use('area', px, py, d));
     // 足止めを仕掛けてから大技へ
@@ -1741,8 +1714,8 @@ function botThink(w, u, dt) {
     T(!blocked && d > 220 && r() < 0.35 + (low ? 0.3 : 0), () => use('beam', undefined, undefined, d));
     T(d > 260 && r() < 0.45, () => use('homing', undefined, undefined, d));
     T(r() < 0.3, () => use('area', px, py, d));
-    T(low && d > 300 && d < 600 && r() < 0.3, () => use('blink', undefined, undefined, d));
-    T(r() < 0.08, () => use('haste') || use('decoy', u.x, u.y) || use('well', u.x, u.y));
+    T(low && d > 300 && d < 600 && r() < 0.3, () => use('haste'));
+    T(r() < 0.08, () => use('haste') || use('harden') || use('decoy', u.x, u.y));
     T(!blocked, () => use('shot', undefined, undefined, d));
     // 何も合わなければ、届くどれかを使う
     if (!chosen && !blocked) chosen = ['homing', 'area', 'beam', 'drain', 'bind'].some(role => use(role, px, py, d));
@@ -1766,7 +1739,7 @@ function botThink(w, u, dt) {
     if (!goal) {
       if (!b.wander || hyp(b.wander.x - u.x, b.wander.y - u.y) < 120 || r() < 0.01) {
         // 自分の術の原理の節点へ行くこともある（そこで戦うと術が強まる）
-        const home = w.nodes.find(n => u.spells.some(sp => sp.a === n.k));
+        const home = w.nodes.find(n => u.spells.some(sp => sp.stages.some(st => st.p[n.k] >= 2)));
         if (home && r() < 0.35) { b.wander = { x: home.x + (r() - 0.5) * 120, y: home.y + (r() - 0.5) * 120 }; }
         else {
         const s = w.springs.length && r() < 0.5 ? pick(w, w.springs) : null;
@@ -1796,7 +1769,7 @@ function botThink(w, u, dt) {
   }
   const L = hyp(mx, my) || 1;
   ix.mx = mx / L; ix.my = my / L;
-  ix.cast = cast && !holding;
+  ix.cast = cast;
   ix.slot = slot;
 }
 
@@ -1827,9 +1800,9 @@ function tierOf(points) {
 // ═══ 17. 公開 ═══════════════════════════════════════════════════
 ROOT.PRIMA_SIM = {
   createWorld, step, spawnHero, hero, unitById, addBot, gain, xpFor, capacityOf, maxMp,
-  normRecipe, pairKey, recipeResult, spellName, partCount, complexityMul, misfireChance, recipeCost, windupTime, spellInfo, spellRole, visualShapeOf,
-  purityMul, falloffMul, hurtZone, hurtWard, wardPoint, wardDist, perfectOk, dispelPerfect, nodeBoost, interfere,
-  beginCast, release, fire, activate, effectAt, detonate, recall, linkedOf, sever, homingTarget,
+  visibleTo, visibleSpell, normRecipe, recipeResult, spellName, partCount, misfireChance, recipeCost, baseCost, stageCost, windupTime, spellInfo, spellRole, visualShapeOf, lookOf, topKeys, echo,
+  falloffMul, touchPower, hurtZone, hurtWard, wardPoint, wardDist, nodeBoost, interfere, advance, waitsSignal,
+  beginCast, release, fire, detonate, recall, linkedOf, sever, homingTarget,
   damage, kill, rank, runPoints, tierOf, motesNear, mulberry, spellReach, slotFor, autoThink
 };
 })();
