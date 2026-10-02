@@ -1155,7 +1155,8 @@ function chantPad(id, a, dur, vol) {
 // 音楽：2つの audio を交差フェードで切り替える。前回と同じ曲は避けて、毎回ちがう曲で始まる
 const BGM = {
   lobby: ['assets/bgm/waiting.mp3', 'assets/bgm/opening.mp3'],
-  play: ['assets/bgm/battle.mp3', 'assets/bgm/battle-2.mp3', 'assets/bgm/battle-3.mp3', 'assets/bgm/battle-4.mp3']
+  play: ['assets/bgm/battle.mp3', 'assets/bgm/battle-2.mp3', 'assets/bgm/battle-3.mp3', 'assets/bgm/battle-4.mp3',
+    'assets/bgm/battle-5.mp3', 'assets/bgm/battle-6.mp3', 'assets/bgm/battle-7.mp3', 'assets/bgm/battle-8.mp3', 'assets/bgm/battle-9.mp3', 'assets/bgm/battle-10.mp3']
 };
 const bgmEls = [$('bgm'), document.createElement('audio')];
 const bgm = { cur: 0, set: null, src: '' };
