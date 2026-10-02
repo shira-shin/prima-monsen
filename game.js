@@ -1690,6 +1690,18 @@ function drawZone(z) {
         ctx.stroke();
       }
     }
+    // 内側の逆回りの輪・縁を巡る光点・脈動する外殻。結界が二重の殻に見える
+    ctx.rotate(-t * 0.9);
+    ctx.strokeStyle = rgba(c, 0.45); ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    for (let i = 0; i <= n; i++) { const a2 = i / n * TAU; i ? ctx.lineTo(Math.cos(a2) * z.zr * 0.8, Math.sin(a2) * z.zr * 0.8) : ctx.moveTo(z.zr * 0.8, 0); }
+    ctx.stroke();
+    runeRing(ctx, z.zr * 0.9, Math.max(6, Math.round(z.zr / 16)), 3.5, z.id);
+    ctx.rotate(t * 0.9 + t * 1.6);
+    for (let i = 0; i < 3; i++) {
+      const a2 = i * TAU / 3, s = 22;
+      ctx.globalAlpha = 0.9 * fade * flick; ctx.drawImage(glow(c), Math.cos(a2) * z.zr - s / 2, Math.sin(a2) * z.zr - s / 2, s, s);
+    }
     ctx.restore();
     return;
   }
@@ -1859,7 +1871,31 @@ function drawSlab(g) {
     ctx.strokeStyle = rgba(col, 0.65); ctx.lineWidth = 3;
     ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.lineTo(bx, by - HH); ctx.lineTo(ax, ay - HH); ctx.closePath(); ctx.stroke();
     ctx.strokeStyle = 'rgba(240,235,248,.7)'; ctx.lineWidth = 0.8; ctx.stroke();
-
+    // 光沢が面を横切り、走査光が昇る。上端と足元は強く光り、両端に光の柱が立つ（削れるとちらつく）
+    const fl = f < 0.4 ? 0.6 + Math.random() * 0.4 : 1;
+    ctx.save();
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.lineTo(bx, by - HH); ctx.lineTo(ax, ay - HH); ctx.closePath(); ctx.clip();
+    const sh = (t * 0.45 + g.id * 0.37) % 1, sx = ax + (bx - ax) * sh, sy = ay + (by - ay) * sh;
+    const sg = ctx.createLinearGradient(sx - cs * 30, sy - sn * 30, sx + cs * 30, sy + sn * 30);
+    sg.addColorStop(0, rgba(col, 0)); sg.addColorStop(0.5, rgba(col, 0.38 * fl)); sg.addColorStop(1, rgba(col, 0));
+    ctx.fillStyle = sg; ctx.fillRect(sx - 40, Math.min(sy, ay, by) - HH - 4, 80, HH + Math.abs(by - ay) + 8);
+    for (let k = 0; k < 3; k++) {
+      const h = ((t * 0.7 + k / 3 + g.id * 0.13) % 1) * HH;
+      ctx.strokeStyle = rgba(col, (1 - h / HH) * 0.55 * fl); ctx.lineWidth = 1.3;
+      ctx.beginPath(); ctx.moveTo(ax, ay - h); ctx.lineTo(bx, by - h); ctx.stroke();
+    }
+    ctx.restore();
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = rgba(col, 0.2 * fl); ctx.lineWidth = 8;
+    ctx.beginPath(); ctx.moveTo(ax, ay - HH); ctx.lineTo(bx, by - HH); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+    ctx.strokeStyle = rgba(col, 0.95 * fl); ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(ax, ay - HH); ctx.lineTo(bx, by - HH); ctx.stroke();
+    for (const [px, py] of [[ax, ay], [bx, by]]) {
+      ctx.strokeStyle = rgba(col, 0.7 * fl); ctx.lineWidth = 2.4;
+      ctx.beginPath(); ctx.moveTo(px, py + 3); ctx.lineTo(px, py - HH - 6); ctx.stroke();
+      ctx.globalAlpha = fade * 0.5 * fl; ctx.drawImage(glow(c), px - 16, py - HH - 22, 32, 32);
+      ctx.globalAlpha = fade;
+    }
   }
   ctx.restore();
 }
@@ -1970,9 +2006,26 @@ function drawThreads(inView) {
     const tip = staffTip(u), dx = o.x - tip.x, dy = o.y - tip.y, d = hyp(dx, dy);
     if (d < 4 || (!inView(o.x, o.y, 40) && !inView(tip.x, tip.y, 40))) return;
     const sag = Math.min(60, d * 0.12), mx = (tip.x + o.x) / 2, my = (tip.y + o.y) / 2 + sag;
-    ctx.strokeStyle = rgba(o.col || hex(u.ink), 0.35 + Math.sin(t * 5 + o.id) * 0.1);
-    ctx.setLineDash([8, 5]); ctx.lineDashOffset = -t * 40;
-    ctx.beginPath(); ctx.moveTo(tip.x, tip.y); ctx.quadraticCurveTo(mx, my, o.x, o.y); ctx.stroke();
+    const nm = o.col || u.ink, col = hex(nm), pulse = 0.5 + 0.5 * Math.sin(t * 5 + o.id);
+    const path = () => { ctx.beginPath(); ctx.moveTo(tip.x, tip.y); ctx.quadraticCurveTo(mx, my, o.x, o.y); ctx.stroke(); };
+    // 淡い光の帯 → 色の糸 → 白い芯の三層。糸の上を光の粒が杖から術へ走る
+    ctx.setLineDash([]); ctx.lineCap = 'round';
+    ctx.strokeStyle = rgba(col, 0.08 + 0.06 * pulse); ctx.lineWidth = 7; path();
+    ctx.strokeStyle = rgba(col, 0.5 + 0.15 * pulse); ctx.lineWidth = 1.8; path();
+    ctx.strokeStyle = 'rgba(255,250,240,.6)'; ctx.lineWidth = 0.7; path();
+    const beads = Math.min(6, 2 + Math.floor(d / 90));
+    for (let k = 0; k < beads; k++) {
+      const q = (t * 0.8 + k / beads + o.id * 0.11) % 1, p = 1 - q;
+      const bx = p * p * tip.x + 2 * p * q * mx + q * q * o.x, by = p * p * tip.y + 2 * p * q * my + q * q * o.y, s = 9 + 5 * Math.sin(q * Math.PI);
+      ctx.globalAlpha = 0.85 * Math.sin(q * Math.PI); ctx.drawImage(glow(nm), bx - s, by - s, s * 2, s * 2);
+    }
+    ctx.globalAlpha = 1;
+    // 結び目：術の側に回る小さな輪と光の点
+    ctx.save(); ctx.translate(o.x, o.y); ctx.rotate(t * 2 + o.id);
+    ctx.strokeStyle = rgba(col, 0.7); ctx.lineWidth = 1.2; ctx.setLineDash([3, 4]);
+    ctx.beginPath(); ctx.arc(0, 0, 7 + pulse * 2, 0, TAU); ctx.stroke(); ctx.setLineDash([]);
+    ctx.drawImage(glow(nm), -10, -10, 20, 20);
+    ctx.restore();
   };
   for (const u of world.units) {
     if (!u.alive || !S.visibleTo(S.hero(world), u)) continue;
@@ -3597,10 +3650,11 @@ function renderForge(soft = false) {
     return `<div class="prima-pt${n ? ' on' : ''}" style="--c:${hex(p.ink)}"><b>${p.kanji}</b><span class="nm">${p.name}</span><span class="pips">${pips}</span><em>${escapeHtml(self || L('（器には効かない）'))}<br>${escapeHtml(L('触れたもの：{0}', touchLine(st, k)))}</em></div>`;
   }).join('');
   // 大きさ・持続・糸
+  $('fSize').max = D.craft.sizeMax[st.vessel] || D.craft.size[1];
   $('fSize').value = st.size; $('fTime').value = st.time;
   $('fSizeV').textContent = `${Math.round(st.size * 100)}%`; $('fTimeV').textContent = `${Math.round(st.time * 100)}%`;
   $('fSize').disabled = st.vessel === 'body'; $('fTime').disabled = st.vessel === 'ray';
-  $('fSlideNote').textContent = { bolt: L('弾：大きさは当たりの広さ、持続は射程。'), ray: L('線：大きさは光の太さ。持続は無い。'), wall: L('面：大きさは長さと硬さ、持続は立っている時間。'), field: L('円：大きさは半径（消費は面積で増える）、持続は残る時間。'), body: L('纏：持続は宿る時間。'), orbit: L('環：大きさは回る半径、持続は回る時間。') }[st.vessel];
+  $('fSlideNote').textContent = { bolt: L('弾：大きさは当たりの広さ、持続は射程。剣などは最大3倍の巨剣にできるが、160%を超えると魔力が急に増える。'), ray: L('線：大きさは光の太さ。持続は無い。'), wall: L('面：大きさは長さと硬さ、持続は立っている時間。'), field: L('円：大きさは半径（消費は面積で増える）、持続は残る時間。'), body: L('纏：持続は宿る時間。'), orbit: L('環：大きさは回る半径、持続は回る時間。160%を超えると巨剣になり、魔力が急に増える。') }[st.vessel];
   const needLink = r.stages.slice(0, -1).some(s => s.then === 'signal');
   $('fLink').innerHTML = [['cut', L('切る'), L('放った瞬間に糸を切る。維持費なし')], ['hold', L('つなぐ'), L('誘導・合図・回収ができる。維持費がかかり、制御容量を1使う')]].map(([v, name, note]) => {
     const blocked = v === 'cut' && needLink, why = blocked ? blockReason(st, 'link', v) : note;

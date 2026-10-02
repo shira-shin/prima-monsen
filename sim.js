@@ -368,7 +368,7 @@ function normStage(s) {
     // 光線と自分の体はエネルギーのまま
     matter: vessel === 'ray' || vessel === 'body' ? 'energy' : o.matter === 'solid' ? 'solid' : 'energy',
     force: FORCES.includes(o.force) ? o.force : 'push',
-    size: vessel === 'body' ? 1 : numIn(o.size, C.size, 1),
+    size: vessel === 'body' ? 1 : numIn(o.size, [C.size[0], C.sizeMax[vessel] || C.size[1]], 1),
     time: vessel === 'ray' ? 1 : numIn(o.time, C.time, 1),
     look: (vessel === 'bolt' || vessel === 'orbit') && LOOKS.includes(o.look) ? o.look : 'auto',
     then, p
@@ -463,7 +463,9 @@ function recipeResult(r) {
 }
 const spellName = r => r.customName || recipeResult(r).name;
 // 魔力の消費：器の負荷 ＋ 原理の負荷 × 点^1.35、大きさ・持続・質で変わる。2段目からは少し軽い
-const SIZE_COST = { bolt: s => .75 + .25 * s, ray: s => .6 + .4 * s, wall: s => .5 + .5 * s, field: s => .35 + .65 * s * s, orbit: s => .6 + .4 * s, body: () => 1 };
+const bigPower = s => 1 + .6 * Math.pow(Math.max(0, s - 1.6), 1.5);   // 巨大な武器は一撃も重い（3倍で約2倍）。代わりに弾は遅くなる
+const bigCost = s => Math.pow(Math.max(0, s - 1.6), 1.5);   // 1.6倍を超える巨大な武器の割増（3倍で約1.66）
+const SIZE_COST = { bolt: s => .75 + .25 * s + .5 * bigCost(s), ray: s => .6 + .4 * s, wall: s => .5 + .5 * s, field: s => .35 + .65 * s * s, orbit: s => .6 + .4 * s + .5 * bigCost(s), body: () => 1 };
 const TIME_COST = { bolt: t => .85 + .15 * t, ray: () => 1, wall: t => .7 + .3 * t, field: t => .6 + .4 * t, orbit: t => .6 + .4 * t, body: t => .55 + .45 * t };
 function stageCost(s, i) {
   let c = C.vessels[s.vessel].cost + C.paths[s.path].cost;
@@ -599,8 +601,8 @@ const hasNext = o => o.si + 1 < o.rec.stages.length;
 // ═══ 08. 器：弾・線 ═════════════════════════════════════════════
 // 弾はすべて同じ項目で作る（あとから項目を足すと遅くなる）
 function spawnBolts(w, owner, base, at) {
-  const st = base.st, n = C.copies[st.p.grow], m = 1 / Math.sqrt(n);
-  const speed = C.bolt.speed * (1 + C.bolt.motionSpeed * echo(st.p.motion)) * (st.matter === 'solid' ? .85 : 1.08);
+  const st = base.st, n = C.copies[st.p.grow], m = bigPower(st.size) / Math.sqrt(n);
+  const speed = C.bolt.speed * (1 + C.bolt.motionSpeed * echo(st.p.motion)) * (st.matter === 'solid' ? .85 : 1.08) / (1 + .2 * Math.max(0, st.size - 1.6));
   const range = C.vessels.bolt.range * st.time;
   const first = base.si === 0;
   const ox = first ? owner.x : at.x, oy = first ? owner.y : at.y;
@@ -1106,7 +1108,7 @@ function applyBody(w, z, u, dt) {
 // 環：自分の周りを回る刃や城壁。飛んでくる弾を受け止め、触れた相手に作用する。一つずつ
 function spawnOrbit(w, owner, base) {
   for (const s of w.spells) if (s.owner === owner.id && s.kind === 'orbiter') s.done = true;
-  const st = base.st, n = C.orbitCopies[st.p.grow], m = Math.sqrt(C.orbitCopies[0] / n);
+  const st = base.st, n = C.orbitCopies[st.p.grow], m = Math.sqrt(C.orbitCopies[0] / n) * bigPower(st.size);
   const castle = shapeFor(st) === 'castle';
   const size = 12 * Math.sqrt(st.size) * (castle ? 1.8 : 1);
   const orad = owner.r + C.orbit.radius * st.size + size * 0.4;
