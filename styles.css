@@ -648,19 +648,23 @@ button { cursor: pointer; }
 .prima-pt.on { border-left-color: var(--c); background: linear-gradient(90deg, color-mix(in srgb, var(--c) 9%, transparent), transparent 70%); }
 .prima-pt > b { font: 900 17px/1 var(--display); color: var(--c); text-align: center; }
 .prima-pt .nm { font-size: 11px; font-weight: 700; color: var(--dim); }
-.prima-pt .pips { display: flex; gap: 3px; }
-.prima-pt .pips button {
-  width: 22px; height: 22px; padding: 0; border: 1px solid rgba(236, 230, 216, .3); background: rgba(6, 5, 9, .6);
-  transform: rotate(45deg) scale(.72);
-}
-.prima-pt .pips button[aria-pressed="true"] { border-color: var(--c); background: var(--c); box-shadow: 0 0 8px color-mix(in srgb, var(--c) 60%, transparent); }
-.prima-pt .pips button:hover { border-color: var(--bone); }
+.prima-pt .pt-ctl { display: flex; align-items: center; gap: 6px; min-width: 132px; }
+.prima-pt input[type="range"] { flex: 1; min-width: 84px; width: auto; accent-color: var(--c); }
+.prima-pt output { width: 2.4em; text-align: right; font: 700 12px/1 var(--display); color: var(--dim); font-variant-numeric: tabular-nums; }
+.prima-pt.on output { color: var(--c); }
 .prima-pt em { font-style: normal; font-size: 11px; line-height: 1.45; color: var(--dim); }
 .prima-pt.on em { color: var(--bone); }
 .sl #fSlideNote { grid-column: 1 / -1; margin: 3px 0 0; font-size: 11px; font-weight: 400; line-height: 1.5; }
-.touch-ui .prima-pt .pips button { width: 30px; height: 30px; }
+.touch-ui .prima-pt input[type="range"] { min-height: 30px; }
 @media (max-width: 600px) {
   .prima-pt { grid-template-columns: 22px auto minmax(0, 1fr); }
   .prima-pt .nm { display: none; }
   .prima-pt em { grid-column: 1 / -1; }
 }
+
+/* 演算の間：演算体の体力 */
+.boss-bar { position: fixed; top: 54px; left: 50%; transform: translateX(-50%); width: min(520px, calc(100vw - 32px)); display: grid; gap: 4px; text-align: center; pointer-events: none; z-index: 5; }
+.boss-bar b { font: 900 15px/1.2 var(--display); letter-spacing: .12em; color: #e6d9ff; text-shadow: 0 0 10px rgba(183, 132, 255, .6); }
+.boss-hp { height: 6px; border: 1px solid rgba(183, 132, 255, .55); background: rgba(10, 6, 20, .75); }
+.boss-hp i { display: block; height: 100%; width: 100%; background: linear-gradient(90deg, #6a4bd0, #b784ff); box-shadow: 0 0 10px rgba(183, 132, 255, .7); transition: width .15s linear; }
+.boss-bar small { font-size: 11px; color: var(--dim); }

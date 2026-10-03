@@ -35,11 +35,11 @@ const angDiff = (a, b) => Math.atan2(Math.sin(b - a), Math.cos(b - a));
 const pick = (w, arr) => arr[Math.floor(w.rng() * arr.length)];
 
 // ═══ 02. 世界の生成 ═════════════════════════════════════════════
-function createWorld(roomKey, seed = (Date.now() & 0xffffff)) {
+function createWorld(roomKey, seed = (Date.now() & 0xffffff), opts = {}) {
   const room = D.rooms[roomKey] || D.rooms.ichi;
   const w = {
     roomKey, room, R: room.R, t: 0, seed, rng: mulberry(seed), nextId: 1,
-    units: [], motes: [], spells: [], zones: [], wards: [], decoys: [],
+    units: [], motes: [], spells: [], zones: [], wards: [], decoys: [], strikes: [], strikeT: 0, boss: null, stage: opts.stage || 0,
     rocks: [], springs: [], events: [], nodes: [],
     heroId: null, respawnQueue: [], grid: makeGrid(room.R), rankT: 0, ranking: [], moteAcc: 0
   };
@@ -69,6 +69,8 @@ function createWorld(roomKey, seed = (Date.now() & 0xffffff)) {
   if (room.practice) for (const d of D.dummies) addDummy(w, d);
   // 途中から入った部屋らしく、Botは育ち具合をばらつかせて置く
   for (let i = 0; i < room.bots; i++) addBot(w, startMass(w));
+  if (room.special) addBoss(w, w.stage);
+  w.strikeT = nextStrike(w);
   for (let i = 0; i < 150; i++) step(w, 1 / 30);
   w.events.length = 0;
   return w;
@@ -81,7 +83,7 @@ function startMass(w) {
 // ═══ 03. 術者（体・能力値） ═════════════════════════════════════
 function makeUnit(w, o) {
   const u = {
-    id: w.nextId++, name: o.name, ink: o.ink, crest: o.crest, tier: o.tier || 0, bot: !!o.bot,
+    id: w.nextId++, name: o.name, ink: o.ink, crest: o.crest, tier: o.tier || 0, skin: o.skin || 0, bot: !!o.bot,
     alive: true, x: 0, y: 0, vx: 0, vy: 0, aim: 0, r: W.body.baseR,
     mass: 0, peak: 0, xp: 0, level: 0,
     hp: W.body.baseHp, maxHp: W.body.baseHp, mp: W.mp.max,
@@ -90,12 +92,12 @@ function makeUnit(w, o) {
     cries: o.cries || { win: '', death: '' },
     // 纏（body）の効き目は毎フレーム場から書き込まれる。hasteT などは描画用の印
     dodgeCd: 0, dashT: 0, phaseT: 0, hasteT: 0, hardenT: 0, vitalT: 0, impactT: 0,
-    bodyT: 0, bodyZone: 0, bodyMotion: 0, bodyArmor: 0, bodyConvert: 0, bodyPhase: 0, cloakT: 0, cloak: 0, revealT: 0,
+    bodyT: 0, bodyZone: 0, bodyMotion: 0, bodyArmor: 0, bodyConvert: 0, bodyPhase: 0, cloakT: 0, cloak: 0, revealT: 0, ghostT: 0,
     // 結でつながれた先：tetherTo が術者なら術者の位置、0 なら (tetherX, tetherY)
     tetherT: 0, tetherX: 0, tetherY: 0, tetherTo: 0, tetherLength: 0, tetherForce: 0, tetherPull: 0, tetherBreak: 0, tetherOwner: 0,
     rootT: 0, slowT: 0, slowAmt: 0, markT: 0, markLv: 0,
     spawnShield: W.spawnShield, combatT: 99, lastHitBy: null, lastHitT: -99,
-    kills: 0, bornT: w.t, place: 0, bestPlace: 99, hurtT: 0, dummy: o.dummy || null, dealt: 0, taken: 0, blocked: 0,
+    kills: 0, bornT: w.t, boss: null, bleedT: 0, place: 0, bestPlace: 99, hurtT: 0, dummy: o.dummy || null, dealt: 0, taken: 0, blocked: 0,
     every: o.every || 0, fireT: 1, fireI: 0, node: -1, center: false,
     input: { mx: 0, my: 0, aim: 0, tx: 0, ty: 0, cast: false, slot: 0, dodge: false, detonate: false, recall: false },
     brain: o.bot ? makeBrain(w, o.school) : null
@@ -128,10 +130,12 @@ function addBot(w, mass = 0) {
     ink: pick(w, D.inkOrder), crest: pick(w, D.crestOrder),
     tier: Math.floor(Math.pow(w.rng(), 1.8) * D.tiers.length),
     spells: school ? school.spells : pick(w, D.botLoadouts).map(k => D.presets[k].r),
-    cries: { win: pick(w, D.cries.win), death: pick(w, D.cries.death) }
+    // 流派の弟子は、開祖の一言を叫ぶことが多い
+    cries: school && school.cries && w.rng() < .7 ? { win: pick(w, school.cries.win), death: pick(w, school.cries.death) } : { win: pick(w, D.cries.win), death: pick(w, D.cries.death) }
   });
   w.units.push(u);
   if (mass > 0) gain(w, u, mass);
+  if (u.tier >= 6) u.skin = 1;
   // レベルの下限：制御容量が育った状態で入る（魔素＝スコアは増やさない）
   let floor = W.bot.levelMin + Math.floor(w.rng() * (W.bot.levelMax - W.bot.levelMin + 1));
   // 流派の術をすべて暴発させずに扱えるだけの制御容量は持って入る
@@ -174,7 +178,7 @@ function dummyThink(w, u, dt) {
 function spawnHero(w, profile) {
   const old = w.units.find(u => u.id === w.heroId);
   if (old) { clearOwned(w, old.id); w.units.splice(w.units.indexOf(old), 1); }
-  const u = makeUnit(w, { name: profile.name || '名無し', ink: profile.ink, crest: profile.crest, tier: profile.tier || 0, bot: false, spells: profile.spells, cries: profile.cries });
+  const u = makeUnit(w, { name: profile.name || '名無し', ink: profile.ink, crest: profile.crest, tier: profile.tier || 0, skin: profile.skin || 0, bot: false, spells: profile.spells, cries: profile.cries });
   w.units.push(u);
   w.heroId = u.id;
   return u;
@@ -184,6 +188,7 @@ function unitById(w, id) { for (const u of w.units) if (u.id === id) return u; r
 
 // 魔素から体を決める
 function refreshBody(u) {
+  if (u.boss) { u.r = u.boss.r; u.maxHp = u.boss.hp; u.hp = Math.min(u.hp, u.maxHp); return; }
   const s = Math.sqrt(Math.max(0, u.mass));
   u.r = Math.min(W.body.maxR, W.body.baseR + s * W.body.rPerSqrt);
   const maxHp = W.body.baseHp + s * W.body.hpPerSqrt;
@@ -191,7 +196,7 @@ function refreshBody(u) {
   u.maxHp = maxHp;
   u.hp = Math.min(u.hp, u.maxHp);
 }
-const speedOf = u => Math.max(W.body.minSpeed, W.body.speed - Math.sqrt(Math.max(0, u.mass)) * W.body.speedPerSqrt);
+const speedOf = u => u.boss ? u.boss.speed : Math.max(W.body.minSpeed, W.body.speed - Math.sqrt(Math.max(0, u.mass)) * W.body.speedPerSqrt);
 const maxMp = u => W.mp.max + u.level * W.mp.perLevel;
 // 立っている節点の原理が、この術のどれかの段に振られているか
 function nodeBoost(w, u, r) {
@@ -352,13 +357,17 @@ const PR = k => D.principles[k];
 const VESSELS = C.vesselOrder, PATHS = C.pathOrder, FORCES = C.forceOrder;
 const LOOKS = ['auto', ...D.shapeOrder];
 const cleanName = v => String(v || '').trim().slice(0, 20);
-const echo = lv => C.echo[lv] || 0;
+// 点は0〜3の連続値。効き目と数は整数の点の間をなめらかにつなぐ
+const lerpAt = (arr, g) => { const x = clamp(g, 0, arr.length - 1), i = Math.min(arr.length - 2, Math.floor(x)); return arr[i] + (arr[i + 1] - arr[i]) * (x - i); };
+const echo = lv => lerpAt(C.echo, lv);
+const copiesOf = g => Math.max(1, Math.round(lerpAt(C.copies, g)));
+const orbitCopiesOf = g => Math.max(1, Math.round(lerpAt(C.orbitCopies, g)));
 const numIn = (v, [lo, hi], def) => { const n = Number(v); return v === undefined || v === null || v === '' || !Number.isFinite(n) ? def : clamp(n, lo, hi); };
 function normStage(s) {
   const o = s && typeof s === 'object' ? s : {};
   const vessel = VESSELS.includes(o.vessel) ? o.vessel : 'bolt';
   const p = {};
-  for (const k of P) p[k] = clamp(Math.round(Number(o.p && o.p[k]) || 0), 0, C.maxLevel);
+  for (const k of P) p[k] = clamp(Math.round((Number(o.p && o.p[k]) || 0) * 10) / 10, 0, C.maxLevel);
   let then = C.thensFor[vessel].includes(o.then) ? o.then : 'hit';
   // 結の無い円は壊れない（硬さを持たない）
   if (then === 'break' && vessel === 'field' && !p.bind) then = 'end';
@@ -410,7 +419,7 @@ function normRecipe(r) {
 function partCount(r) {
   let n = r.stages.length - 1 + (r.link ? 1 : 0);
   for (const s of r.stages) { for (const k of P) n += s.p[k]; n += C.paths[s.path].parts; }
-  return n;
+  return Math.round(n * 10) / 10;
 }
 // 暴発率：制御容量を超えた点1つごとに上がる
 function misfireChance(r, u) {
@@ -496,10 +505,12 @@ function spellInfo(u, r) {
   return {
     name: spellName(r), result: res, parts: partCount(r), cap: capacityOf(u), cost: recipeCost(r), windup: windupTime(r), misfire: misfireChance(r, u), color: res.color, type: res.type,
     // 威力の目安：1段目の一撃（弾・線は増の複製の合計）。遠く（800先）で残る割合
-    power: touchPower(s0) * VESSEL_MUL[s0.vessel] * (['bolt', 'ray'].includes(s0.vessel) ? Math.sqrt(C.copies[s0.p.grow]) : 1),
+    power: touchPower(s0) * VESSEL_MUL[s0.vessel] * (['bolt', 'ray'].includes(s0.vessel) ? Math.sqrt(copiesOf(s0.p.grow)) : 1),
     reach: falloffMul(s0, 800)
   };
 }
+// 当たらない体：回避で跳んでいる間と、纏の相が十分に高く透けている間
+const intang = u => u.dashT > 0 || u.ghostT > 0;
 // 隠密は無敵ではない。近距離・詠唱・被弾・観測（印）で姿が分かる
 function visibleTo(observer, u) {
   if (!u) return false;
@@ -534,6 +545,8 @@ function release(w, u) {
   u.casting = null;
   const r = u.spells[c.slot];
   u.slotCd[c.slot] = W.cast.recast;
+  // 演算体は術者の戦い方を見て学ぶ
+  if (w.boss && u.id === w.heroId) { const v = r.stages[0].vessel, sn = w.boss.boss.seen; sn[v] = (sn[v] || 0) + 1; }
   // 制御容量を超えた術式は、放つ瞬間に崩れて自分を傷つけることがある（② 構造体）
   if (w.rng() < misfireChance(r, u)) {
     w.events.push({ type: 'misfire', id: u.id, x: u.x, y: u.y, ink: u.ink, name: spellName(r) });
@@ -601,7 +614,7 @@ const hasNext = o => o.si + 1 < o.rec.stages.length;
 // ═══ 08. 器：弾・線 ═════════════════════════════════════════════
 // 弾はすべて同じ項目で作る（あとから項目を足すと遅くなる）
 function spawnBolts(w, owner, base, at) {
-  const st = base.st, n = C.copies[st.p.grow], m = bigPower(st.size) / Math.sqrt(n);
+  const st = base.st, n = copiesOf(st.p.grow), m = bigPower(st.size) / Math.sqrt(n);
   const speed = C.bolt.speed * (1 + C.bolt.motionSpeed * echo(st.p.motion)) * (st.matter === 'solid' ? .85 : 1.08) / (1 + .2 * Math.max(0, st.size - 1.6));
   const range = C.vessels.bolt.range * st.time;
   const first = base.si === 0;
@@ -623,7 +636,7 @@ function spawnBolts(w, owner, base, at) {
     const sx = first ? ox + Math.cos(a) * (owner.r + 4) : ox, sy = first ? oy + Math.sin(a) * (owner.r + 4) : oy;
     w.spells.push({ ...common, kind: 'proj', state: 'fly', sx, sy, x: sx, y: sy, tx: at.tx, ty: at.ty, t: 0, dur: 0, age: 0, wait: 0, fuseT: 0, severT: R.link.severedLife,
       vx: Math.cos(a) * speed + (first ? owner.vx * .25 : 0), vy: Math.sin(a) * speed + (first ? owner.vy * .25 : 0), speed, range, traveled: 0,
-      homing: st.path === 'seek', tgt: null, retarget: 0, pierce: st.p.divide, stopAt: stops ? Math.min(range, Math.max(40, aimD)) : Infinity,
+      homing: st.path === 'seek', tgt: null, retarget: 0, pierce: Math.round(st.p.divide), stopAt: stops ? Math.min(range, Math.max(40, aimD)) : Infinity,
       returns: st.path === 'return', back: false, life: 0, ang: 0, orad: 0, hp: 0, hitT: 0, spin: 0 });
   }
 }
@@ -816,14 +829,14 @@ function boltLand(w, s, fromArc) {
   const owner = unitById(w, s.owner);
   if (fromArc && owner) {
     const rad = 34 * s.st.size;
-    for (const u of w.units) if (u.alive && u.id !== s.owner && u.dashT <= 0 && hyp(u.x - s.x, u.y - s.y) < rad + u.r) touch(w, s, owner, u, 1, u.x - s.x, u.y - s.y, owner.x, owner.y);
+    for (const u of w.units) if (u.alive && u.id !== s.owner && !intang(u) && hyp(u.x - s.x, u.y - s.y) < rad + u.r) touch(w, s, owner, u, 1, u.x - s.x, u.y - s.y, owner.x, owner.y);
     w.events.push({ type: 'splat', x: s.x, y: s.y, col: s.col });
   }
   s.done = true;
   if (!advance(w, s, s.x, s.y, dir, 'hit') && !fromArc) w.events.push({ type: 'fizzle', x: s.x, y: s.y, col: s.col });
 }
 function foeNear(w, s, rad) {
-  for (const u of w.units) if (u.alive && u.id !== s.owner && u.dashT <= 0 && hyp(u.x - s.x, u.y - s.y) < rad + u.r) return u;
+  for (const u of w.units) if (u.alive && u.id !== s.owner && !intang(u) && hyp(u.x - s.x, u.y - s.y) < rad + u.r) return u;
   return null;
 }
 // 構造（壁・結界・刃）へ与える力：分で鋭く、質の相性で変わる。光線はエネルギーの構造を砕く
@@ -871,8 +884,16 @@ function flyCollide(w, s) {
     return;
   }
   const owner = unitById(w, s.owner);
+  if (w.decoys.length) for (const d of [...w.decoys]) {
+    if (d.owner === s.owner || s.hit.includes(-d.id) || hyp(d.x - s.x, d.y - s.y) > d.r + s.size) continue;
+    popDecoy(w, d);
+    if (s.pierce > 0) { s.pierce--; s.hit.push(-d.id); continue; }
+    s.done = true;
+    advance(w, s, s.x, s.y, Math.atan2(s.vy, s.vx), 'hit');
+    return;
+  }
   for (const u of w.units) {
-    if (!u.alive || u.id === s.owner || s.hit.includes(u.id) || u.dashT > 0) continue;
+    if (!u.alive || u.id === s.owner || s.hit.includes(u.id) || intang(u)) continue;
     if (hyp(u.x - s.x, u.y - s.y) > u.r + s.size) continue;
     if (owner) touch(w, s, owner, u, 1, s.vx, s.vy, owner.x, owner.y);
     // 分の点の数だけ体を貫く
@@ -890,7 +911,7 @@ function stopBolt(w, s) {
 }
 // 線：岩と設置壁で止まり、途中の相手を貫く。相の点が結より多ければ構造を越える
 function fireRays(w, owner, base, at) {
-  const st = base.st, n = C.copies[st.p.grow], m = 1 / Math.sqrt(n), lead = (n - 1) >> 1;
+  const st = base.st, n = copiesOf(st.p.grow), m = 1 / Math.sqrt(n), lead = (n - 1) >> 1;
   const first = base.si === 0;
   const ox = first ? owner.x : at.x, oy = first ? owner.y : at.y;
   for (let i = 0; i < n; i++) fireRay(w, owner, { ...base, mul: base.mul * m, dmg: base.dmg * m }, ox, oy, at.dir + (i - (n - 1) / 2) * C.spread * .7, first, i === lead, at);
@@ -951,10 +972,15 @@ function fireRay(w, u, s, ox, oy, a, first, lead, at) {
     break;
   }
   for (const o of w.units) {
-    if (!o.alive || o.id === u.id || o.dashT > 0) continue;
+    if (!o.alive || o.id === u.id || intang(o)) continue;
     const fx = o.x - x0, fy = o.y - y0, t = fx * dx + fy * dy;
     if (t < 0 || t >= len) continue;
     if (hyp(fx - dx * t, fy - dy * t) < o.r + width) touch(w, { ...s, dmg: s.dmg * dmgMul, traveled: t, x: o.x, y: o.y }, u, o, C.ray.mul, dx, dy, u.x, u.y);
+  }
+  if (w.decoys.length) for (const d of [...w.decoys]) {
+    if (d.owner === u.id) continue;
+    const fx = d.x - x0, fy = d.y - y0, t = fx * dx + fy * dy;
+    if (t >= 0 && t < len && hyp(fx - dx * t, fy - dy * t) < d.r + width) popDecoy(w, d);
   }
   w.events.push({ type: 'beam', id: u.id, x1: x0, y1: y0, x2: x0 + dx * len, y2: y0 + dy * len, w: width, col: s.col, rtype: 'ray', a: s.look.a, b: s.look.b });
   // 次の段は照準の地点（遮られればその手前）で開く
@@ -1058,10 +1084,11 @@ function fieldBurst(w, z) {
 }
 function fieldTouch(w, z, owner, k) {
   let touched = false;
+  if (w.decoys.length) for (const d of [...w.decoys]) if (d.owner !== z.owner && hyp(d.x - z.x, d.y - z.y) < z.zr + d.r) popDecoy(w, d);
   for (const u of w.units) {
     if (!u.alive || hyp(u.x - z.x, u.y - z.y) > z.zr + u.r) continue;
     if (u.id === z.owner) { if (z.st.p.grow) heal(w, u, C.mend * echo(z.st.p.grow) * k * z.mul, k < 1); continue; }
-    if (u.dashT > 0) continue;
+    if (intang(u)) continue;
     touch(w, z, owner, u, k, u.x - z.x, u.y - z.y, z.x, z.y);
     touched = true;
   }
@@ -1072,12 +1099,34 @@ function fieldTouch(w, z, owner, k) {
 // 纏：自分の体を器にする。一つずつ（新しく纏うと前のものはほどける）
 function spawnBody(w, owner, base) {
   for (const z of w.zones) if (z.owner === owner.id && z.kind === 'body') z.dead = true;
+  for (let i = w.decoys.length - 1; i >= 0; i--) if (w.decoys[i].owner === owner.id) w.decoys.splice(i, 1);
   const st = base.st;
   const z = { id: w.nextId++, owner: base.owner, col: base.col, look: base.look, kind: 'body', x: owner.x, y: owner.y, zr: owner.r + 18, t: 0, life: C.body.life * st.time,
     tick: 0, barrier: null, matter: 'energy', hp: 0, max: 0, dead: false, hold: base.hold, linked: base.linked, cost: base.cost,
     dx: Math.cos(owner.aim), dy: Math.sin(owner.aim), rec: base.rec, si: base.si, st, mul: base.mul, unit: base.unit, boost: base.boost, dmg: base.dmg, veil: base.veil, bindLv: base.bindLv, advanced: false, grp: null, k: base.k };
   w.zones.push(z);
   w.events.push({ type: 'buff', id: owner.id, kind: base.look.a, x: owner.x, y: owner.y, col: base.col });
+  if (st.p.phase > 0 && st.p.grow > 0) spawnClones(w, owner, st, base.col);
+}
+// 分身：相（姿を写す）と増（数を増やす）が揃うと、術者の姿の囮が散らばる。狙いと追尾を引き、割られると纏の「触れたら」が開く
+function spawnClones(w, owner, st, col) {
+  const n = Math.max(1, Math.min(C.clone.max, Math.round(Math.min(st.p.phase, st.p.grow))));
+  const life = R.decoy.life * st.time * (1 + C.clone.lifePer * echo(st.p.grow));
+  for (let i = 0; i < n; i++) {
+    const a = n === 1 ? owner.aim + (w.rng() < .5 ? 1 : -1) * 1.2 : owner.aim + (i - (n - 1) / 2) * 1.1;
+    w.decoys.push({ id: w.nextId++, owner: owner.id, x: owner.x, y: owner.y, vx: Math.cos(a) * C.clone.speed, vy: Math.sin(a) * C.clone.speed, t: 0, life,
+      mirror: true, ink: owner.ink, crest: owner.crest, r: owner.r, aim: owner.aim, col });
+  }
+}
+function popDecoy(w, d) {
+  const i = w.decoys.indexOf(d);
+  if (i < 0) return;
+  w.decoys.splice(i, 1);
+  w.events.push({ type: 'decoyPop', x: d.x, y: d.y, col: d.col, ink: d.ink, owner: d.owner, boss: !!d.boss });
+  // 演算体の偽物は罠：割ったその場へ雷が落ちる
+  if (d.boss) { addStrike(w, d.x, d.y, .6, 110, .3); return; }
+  const z = w.zones.find(o => o.kind === 'body' && o.owner === d.owner && !o.dead);
+  if (z) advance(w, z, d.x, d.y, d.aim, 'hit');
 }
 function applyBody(w, z, u, dt) {
   const p = z.st.p, e = k => echo(p[k]) * Math.min(1, z.mul);
@@ -1093,13 +1142,17 @@ function applyBody(w, z, u, dt) {
   if (p.grow) { u.vitalT = .15; if (u.hp < u.maxHp) u.hp = Math.min(u.maxHp, u.hp + C.body.regen * e('grow') * dt); }
   if (p.convert) u.impactT = .15;
   if (p.divide) for (const k of ['slowT', 'rootT', 'tetherT']) u[k] = Math.max(0, u[k] - C.body.cleanse * e('divide') * dt);
-  if (p.phase && u.revealT <= 0) { u.cloakT = .15; u.cloak = Math.min(1, .3 * e('phase')); }
+  if (p.phase && u.revealT <= 0) {
+    u.cloakT = .15; u.cloak = Math.min(1, C.cloak.per * e('phase'));
+    // 相が高いと体が透け、弾・線・体を素通りする。魔力を毎秒払い、尽きるか、撃つ・打つと解ける
+    if (p.phase >= C.ghost.at && u.mp > 0) { u.ghostT = .15; u.mp = Math.max(0, u.mp - C.ghost.drain * dt); }
+  }
   // 体当たり：触れた相手に原理が作用する
   z.tick -= dt;
   if (z.tick > 0) return;
   let touched = false;
   for (const v of w.units) {
-    if (!v.alive || v === u || v.dashT > 0 || hyp(v.x - u.x, v.y - u.y) > u.r + v.r + 6) continue;
+    if (!v.alive || v === u || intang(v) || hyp(v.x - u.x, v.y - u.y) > u.r + v.r + 6) continue;
     touch(w, z, u, v, C.body.bump, v.x - u.x, v.y - u.y, u.x, u.y);
     touched = true;
   }
@@ -1108,7 +1161,7 @@ function applyBody(w, z, u, dt) {
 // 環：自分の周りを回る刃や城壁。飛んでくる弾を受け止め、触れた相手に作用する。一つずつ
 function spawnOrbit(w, owner, base) {
   for (const s of w.spells) if (s.owner === owner.id && s.kind === 'orbiter') s.done = true;
-  const st = base.st, n = C.orbitCopies[st.p.grow], m = Math.sqrt(C.orbitCopies[0] / n) * bigPower(st.size);
+  const st = base.st, n = orbitCopiesOf(st.p.grow), m = Math.sqrt(C.orbitCopies[0] / n) * bigPower(st.size);
   const castle = shapeFor(st) === 'castle';
   const size = 12 * Math.sqrt(st.size) * (castle ? 1.8 : 1);
   const orad = owner.r + C.orbit.radius * st.size + size * 0.4;
@@ -1158,7 +1211,7 @@ function tickOrbiter(w, s, owner, dt) {
   }
   // 触れた相手に作用する（同じ相手は hitCd ごとに一度）
   for (const u of w.units) {
-    if (!u.alive || u.id === s.owner || u.dashT > 0 || s.hit.includes(u.id)) continue;
+    if (!u.alive || u.id === s.owner || intang(u) || s.hit.includes(u.id)) continue;
     if (hyp(u.x - s.x, u.y - s.y) > u.r + s.size || lineBlocked(w, owner.x, owner.y, s.x, s.y)) continue;
     s.hit.push(u.id);
     touch(w, s, owner, u, C.orbit.touch, u.x - owner.x, u.y - owner.y, owner.x, owner.y);
@@ -1205,7 +1258,7 @@ function updateZones(w, dt) {
     g.tick = C.wall.tick;
     let touched = false;
     for (const u of w.units) {
-      if (!u.alive || u.dashT > 0) continue;
+      if (!u.alive || intang(u)) continue;
       const cp = wardPoint(g, u.x, u.y);
       if (hyp(u.x - cp.x, u.y - cp.y) > g.r + u.r + 6) continue;
       if (u.id === g.owner) { if (g.st.p.grow) heal(w, u, C.mend * echo(g.st.p.grow) * C.wall.touch, true); continue; }
@@ -1214,7 +1267,13 @@ function updateZones(w, dt) {
     }
     if (touched) advance(w, g, g.x, g.y, Math.atan2(g.dy, g.dx), 'hit');
   }
-  for (let i = w.decoys.length - 1; i >= 0; i--) { const d = w.decoys[i]; d.t += dt; if (d.t > d.life) w.decoys.splice(i, 1); }
+  for (let i = w.decoys.length - 1; i >= 0; i--) {
+    const d = w.decoys[i];
+    d.t += dt;
+    if (d.t > d.life) { w.decoys.splice(i, 1); continue; }
+    d.x += d.vx * dt; d.y += d.vy * dt;
+    const k = Math.max(0, 1 - C.clone.drag * dt); d.vx *= k; d.vy *= k;
+  }
 }
 
 // ═══ 11. 糸（維持費・切断・誘導・合図・回収） ════════════════════
@@ -1292,7 +1351,7 @@ function clearOwned(w, id) {
 //  分：壊す（打撃・殻を剥がす・2点で糸を断つ）  動：押す・引く・回す  結：中心へつなぐ（3点で足止め）
 //  換：魔力を奪う  相：印を付ける  増：相手には効かない（自分の紋を直す）
 function touch(w, s, owner, u, k, dirx, diry, cx, cy) {
-  if (u.spawnShield > 0 || u.dashT > 0 || !u.alive) return;
+  if (u.spawnShield > 0 || intang(u) || !u.alive) return;
   const st = s.st, p = st.p, e = key => echo(p[key]);
   owner.revealT = Math.max(owner.revealT, 1.4);
   // 打撃は s.dmg（魔素の重さ・節点・複製の倍率を含む）× 器の倍率 × 遠くでの衰え。副作用の強さも同じ割合で弱まる
@@ -1339,6 +1398,12 @@ function damage(w, u, dmg, source) {
   dmg *= 1 - u.bodyArmor;
   u.revealT = Math.max(u.revealT, 1.4);
   const foe = source && source.id !== u.id;
+  // 追い打ち：手負いの相手にはいっそう重く入り、傷口は塞がらない（法則：世界は誰も選ばない）
+  if (foe && !u.dummy && !w.room.practice && !u.boss) {
+    const hr = u.hp / u.maxHp;
+    if (hr < W.cruel.finish.below) dmg *= W.cruel.finish.mul;
+    if (hr < W.cruel.bleed.below) u.bleedT = W.cruel.bleed.time;
+  }
   // 纏の換：受けた打撃の一部を魔力へ
   if (foe && u.bodyConvert > 0) { const a = dmg * u.bodyConvert; dmg -= a; u.mp = Math.min(maxMp(u), u.mp + a * .8); }
   if (foe) { source.dealt += dmg; source.revealT = Math.max(source.revealT, 1.4); }
@@ -1384,7 +1449,7 @@ function kill(w, u) {
     x: u.x, y: u.y, r: u.r, ink: u.ink, crest: u.crest, mass: u.mass, peak: u.peak, killerInk: credit ? credit.ink : null,
     deathCry: u.cries.death, winCry: credit ? credit.cries.win : '', killerBot: credit ? credit.bot : false
   });
-  if (u.bot) w.respawnQueue.push(w.t + 2 + w.rng() * 5);
+  if (u.bot && !u.boss) w.respawnQueue.push(w.t + 2 + w.rng() * 5);
 }
 function updateRespawns(w) {
   for (let i = w.respawnQueue.length - 1; i >= 0; i--) {
@@ -1397,17 +1462,102 @@ function updateRespawns(w) {
   }
 }
 
+// ═══ 13b. 落雷とスペシャルステージの演算体 ═══════════════════════
+// 落雷：予告の輪が出て、少しあとに落ちる。魔素を多く抱えた者ほど選ばれやすい（法則二）。避けるか、受けるか
+function nextStrike(w) {
+  const sc = w.room.special ? D.bosses[w.stage].strikeEvery : W.cruel.strike.every;
+  return sc[0] + w.rng() * (sc[1] - sc[0]);
+}
+function addStrike(w, x, y, delay, r, share, motes = 0) {
+  w.strikes.push({ id: w.nextId++, x, y, r, t: 0, delay, share, motes });
+  w.events.push({ type: 'strikeWarn', x, y, r, delay });
+}
+function updateStrikes(w, dt) {
+  if (!w.room.practice) {
+    w.strikeT -= dt;
+    if (w.strikeT <= 0) {
+      w.strikeT = nextStrike(w);
+      const C2 = W.cruel.strike, alive = w.units.filter(u => u.alive && !u.dummy && !u.boss);
+      if (alive.length) {
+        const top = alive.reduce((a, b) => (b.mass > a.mass ? b : a));
+        const victim = w.room.special ? alive[0] : w.rng() < C2.bias ? top : null;
+        if (victim) addStrike(w, victim.x + victim.vx * C2.warn * .5, victim.y + victim.vy * C2.warn * .5, C2.warn, C2.r, C2.hpShare, C2.motes);
+        else { const a = w.rng() * TAU, d = Math.sqrt(w.rng()) * (w.R - 200); addStrike(w, Math.cos(a) * d, Math.sin(a) * d, C2.warn, C2.r, C2.hpShare, C2.motes); }
+      }
+    }
+  }
+  for (let i = w.strikes.length - 1; i >= 0; i--) {
+    const s = w.strikes[i];
+    s.t += dt;
+    if (s.t < s.delay) continue;
+    w.strikes.splice(i, 1);
+    w.events.push({ type: 'strike', x: s.x, y: s.y, r: s.r });
+    for (const u of w.units) {
+      if (!u.alive || u.dummy || intang(u) || hyp(u.x - s.x, u.y - s.y) > s.r + u.r) continue;
+      damage(w, u, u.maxHp * s.share, null);
+      u.vx += (u.x - s.x) * 4; u.vy += (u.y - s.y) * 4;
+    }
+    // 落ちた所には魔素が噴く（誰のものでもない）
+    for (let k = 0; k < Math.min(18, s.motes / 2); k++) { const a = w.rng() * TAU, d = w.rng() * s.r; dropMote(w, s.x + Math.cos(a) * d, s.y + Math.sin(a) * d, 2.5, D.inkOrder[Math.floor(w.rng() * D.inkOrder.length)], 140); }
+  }
+}
+// 演算体：脳と回路を思わせる知性。力で押すより、欺き、学び、観測する
+function addBoss(w, stage) {
+  const B = D.bosses[Math.min(stage, D.bosses.length - 1)];
+  const u = makeUnit(w, { name: B.name, ink: 'purple', crest: 'ring', bot: true, spells: B.spells.map(k => D.presets[k].r), cries: { win: B.win, death: B.death } });
+  u.boss = { stage, hp: B.hp, r: B.r, speed: B.speed, seen: {}, counter: '', learnT: B.learnEvery, decoyT: B.decoyEvery * .6, hideT: 0 };
+  u.mass = B.mass; u.peak = B.mass; u.level = 12; u.xp = xpFor(12);
+  refreshBody(u);
+  u.hp = u.maxHp; u.mp = maxMp(u); u.spawnShield = 0;
+  u.brain.skill = .95; u.brain.aggr = .85; u.brain.flee = 0; u.brain.keep = 360;
+  u.x = w.R * .45; u.y = 0; u.aim = Math.PI;
+  w.units.push(u);
+  w.boss = u;
+  return u;
+}
+function bossThink(w, u, dt) {
+  const B = u.boss, cfg = D.bosses[Math.min(B.stage, D.bosses.length - 1)], h = hero(w);
+  u.mp = Math.min(maxMp(u), u.mp + 10 * dt);
+  if (!h || !h.alive) return;
+  // 学ぶ：術者が多用した器に合わせて、四つの術を組み替える
+  B.learnT -= dt;
+  if (B.learnT <= 0) {
+    B.learnT = cfg.learnEvery;
+    let dom = '', best = 0;
+    for (const [v, n] of Object.entries(B.seen)) if (n > best) { best = n; dom = v; }
+    B.seen = {};
+    if (dom && dom !== B.counter && D.bossCounters[dom]) {
+      B.counter = dom;
+      u.spells = D.bossCounters[dom].map(k => normRecipe(D.presets[k].r));
+      u.slotCd = [0, 0, 0, 0];
+      w.events.push({ type: 'bossLearn', id: u.id, vessel: dom, x: u.x, y: u.y });
+    }
+  }
+  // 欺く：偽の自分を撒き、本物は姿を消す。偽物を割ると、そこへ雷が落ちる
+  B.decoyT -= dt;
+  if (B.decoyT <= 0) {
+    B.decoyT = cfg.decoyEvery * (.8 + w.rng() * .4);
+    for (let i = 0; i < cfg.decoyN; i++) {
+      const a = w.rng() * TAU, v = 90 + w.rng() * 120;
+      w.decoys.push({ id: w.nextId++, owner: u.id, x: u.x, y: u.y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, t: 0, life: 5.5, mirror: true, boss: true, ink: u.ink, crest: u.crest, r: u.r, aim: u.aim, col: '#b784ff' });
+    }
+    B.hideT = 3;
+    w.events.push({ type: 'bossDecoy', id: u.id, x: u.x, y: u.y });
+  }
+  if (B.hideT > 0) { B.hideT -= dt; if (u.revealT <= 0) { u.cloakT = .15; u.cloak = .9; } }
+}
 // ═══ 14. 1フレームの更新 ════════════════════════════════════════
 function step(w, dt) {
   dt = Math.min(dt, 0.05);
   w.t += dt;
-  for (const u of w.units) if (u.alive && u.bot) botThink(w, u, dt);
+  for (const u of w.units) if (u.alive && u.bot) { botThink(w, u, dt); if (u.boss) bossThink(w, u, dt); }
   for (const u of w.units) if (u.alive && u.dummy) dummyThink(w, u, dt);
   for (const u of w.units) if (u.alive) updateUnit(w, u, dt);
   separate(w);
   updateSpells(w, dt);
   updateZones(w, dt);
   updateLinks(w, dt);
+  updateStrikes(w, dt);
   updateMotes(w, dt);
   updateRespawns(w);
   w.rankT -= dt;
@@ -1415,7 +1565,7 @@ function step(w, dt) {
 }
 function updateUnit(w, u, dt) {
   const ix = u.input;
-  for (const k of ['bodyT', 'cloakT', 'revealT', 'impactT', 'tetherT', 'hasteT', 'hardenT', 'vitalT']) u[k] = Math.max(0, u[k] - dt);
+  for (const k of ['bodyT', 'cloakT', 'ghostT', 'revealT', 'impactT', 'tetherT', 'hasteT', 'hardenT', 'vitalT']) u[k] = Math.max(0, u[k] - dt);
   // 纏がほどけたら、体に宿した原理も消える
   if (u.bodyT <= 0) { u.bodyMotion = 0; u.bodyArmor = 0; u.bodyConvert = 0; u.bodyPhase = 0; u.bodyZone = 0; }
   if (u.tetherT > 0) {
@@ -1435,10 +1585,15 @@ function updateUnit(w, u, dt) {
   u.slowT -= dt; if (u.slowT <= 0) u.slowAmt = 0;
   u.combatT += dt;
   // 魔力は勝手には戻らない。節点の中では湧き出し、修練場では常に戻る
-  const regen = w.room.practice ? W.mp.practice : u.node >= 0 ? W.node.regen : W.mp.regen;
+  const regen = w.room.practice ? W.mp.practice : w.room.special ? W.mp.special : u.node >= 0 ? W.node.regen : W.mp.regen;
   u.mp = Math.min(maxMp(u), u.mp + regen * dt);
-  if (u.mass > W.decay.floor) { u.mass -= (u.mass - W.decay.floor) * W.decay.rate * (1 + u.mass / W.decay.soft) * dt; refreshBody(u); }
-  if (u.combatT > W.regen.delay) u.hp = Math.min(u.maxHp, u.hp + u.maxHp * W.regen.perSec * dt);
+  if (u.mass > W.decay.floor && !u.boss) { u.mass -= (u.mass - W.decay.floor) * W.decay.rate * (1 + u.mass / W.decay.soft) * dt; refreshBody(u); }
+  // 手負いは自然には癒えない。血が止まらない間は構造が削られ続ける
+  if (u.combatT > W.regen.delay && (u.hp > u.maxHp * W.cruel.noRegen || w.room.practice)) u.hp = Math.min(u.maxHp, u.hp + u.maxHp * W.regen.perSec * dt);
+  if (u.bleedT > 0) {
+    u.bleedT -= dt;
+    if (!w.room.practice && !u.dummy && !u.boss) { u.hp -= u.maxHp * W.cruel.bleed.perSec * dt; if (u.hp <= 0) kill(w, u); }
+  }
   // 節点に出入りした（入った節点の原理の術が強まる）
   let node = -1;
   for (const n of w.nodes) if (hyp(u.x - n.x, u.y - n.y) < W.node.r) { node = n.i; break; }
@@ -1532,7 +1687,7 @@ function separate(w) {
 // 術の役割：どんな場面で使うかを、1段目の器と原理、つながる段から決める
 function spellRole(r) {
   const s0 = r.stages[0], p = s0.p, v = s0.vessel, chain = r.stages.length > 1;
-  if (v === 'body') return p.grow ? 'heal' : p.phase ? 'decoy' : p.motion && p.motion >= p.bind ? 'haste' : 'harden';
+  if (v === 'body') return p.grow && p.phase ? 'decoy' : p.grow ? 'heal' : p.phase ? 'decoy' : p.motion && p.motion >= p.bind ? 'haste' : 'harden';
   if (v === 'orbit') return 'guard';
   if (v === 'wall') return 'ward';
   if (v === 'ray') return 'beam';
@@ -1568,7 +1723,7 @@ function spellReach(r) {
 function makeBrain(w, school) {
   const r = w.rng;
   return {
-    t: 0, mode: 'gather', target: null, wander: null, placing: false,
+    t: 0, mode: 'gather', target: null, bait: 0, wander: null, placing: false,
     // 腕前は高め：先読みの精度・よける確率・守りの判断に効く
     aggr: 0.35 + r() * 0.6, skill: 0.45 + r() * 0.5, flee: 0.2 + r() * 0.2,
     keep: (school ? school.keep : 300 + r() * 180) + r() * 70, strafe: r() < 0.5 ? 1 : -1, reserve: 10 + r() * 26, lastGuard: -9, aegisAt: -99,
@@ -1602,7 +1757,13 @@ function botThink(w, u, dt) {
   const b = u.brain, ix = u.input, r = w.rng;
   const tgt = b.target && unitById(w, b.target);
   // 狙いは毎フレーム：相手の動きを先読みし、腕前に応じてぶれる
-  if (tgt && tgt.alive && visibleTo(u, tgt)) {
+  const bait = b.bait ? w.decoys.find(o => o.id === b.bait) : null;
+  if (bait) {
+    // 分身に惑わされている間は、囮へ撃つ
+    const want = Math.atan2(bait.y - u.y, bait.x - u.x);
+    ix.aim = u.aim + angDiff(u.aim, want) * Math.min(1, dt * (5 + b.skill * 12));
+    if (!b.placing) { ix.tx = bait.x; ix.ty = bait.y; }
+  } else if (tgt && tgt.alive && visibleTo(u, tgt)) {
     const d = hyp(tgt.x - u.x, tgt.y - u.y), lead = d / 760 * (0.4 + b.skill * 0.7);
     const px = tgt.x + tgt.vx * lead, py = tgt.y + tgt.vy * lead;
     const want = Math.atan2(py - u.y, px - u.x);
@@ -1625,6 +1786,18 @@ function botThink(w, u, dt) {
     const fresh = o.mass < 20 && w.t - o.bornT < 25 && u.lastHitBy !== o.id ? 0.3 : 1;
     const s = (1 + weak * 1.6 + (o.mass > u.mass ? 0.3 : 0) + (o.rootT > 0 ? 0.8 : 0) + (u.lastHitBy === o.id && w.t - u.lastHitT < 4 ? 0.7 : 0)) / (d + 120) * (o.spawnShield > 0 ? 0.1 : 1) * fresh;
     if (s > ps) { ps = s; pickU = o; }
+  }
+  // 近くの分身：腕前の低い Bot ほど本物と取り違え、囮のほうを狙う
+  b.bait = 0;
+  let baitD = 1e9, baitO = null;
+  for (const o of w.decoys) {
+    if (o.owner === u.id) continue;
+    const dd = hyp(o.x - u.x, o.y - u.y);
+    if (dd < 640 && dd < baitD) { baitD = dd; baitO = o; }
+  }
+  if (baitO && (!pickU || hyp(pickU.x - u.x, pickU.y - u.y) > baitD * .7) && r() > .1 + b.skill * .45) {
+    b.bait = baitO.id;
+    pickU = { id: 0, x: baitO.x, y: baitO.y, vx: baitO.vx, vy: baitO.vy, hp: 40, maxHp: 100, mass: 0, rootT: 0, tetherT: 0, slowAmt: 0, spawnShield: 0, bornT: 0 };
   }
   const hpR = u.hp / u.maxHp;
   let mx = 0, my = 0, cast = false, slot = 0;
@@ -1762,6 +1935,8 @@ function botThink(w, u, dt) {
   }
   // 光線の構えを向けられたら、横へずれる
   if (beamAim && r() < b.skill) { const a = Math.atan2(my, mx) + Math.PI / 2 * b.strafe; mx += Math.cos(a) * 2; my += Math.sin(a) * 2; }
+  // 予告の輪から離れる
+  for (const k of w.strikes) { const dx = u.x - k.x, dy = u.y - k.y, d = hyp(dx, dy) || 1; if (d < k.r + 90 && r() < .3 + b.skill * .6) { mx += dx / d * 3; my += dy / d * 3; } }
   // 結界と岩を避ける
   const dc = hyp(u.x, u.y);
   if (dc > w.R - 260) { const k = (dc - (w.R - 260)) / 120; mx -= u.x / dc * k * 2; my -= u.y / dc * k * 2; }
@@ -1801,8 +1976,8 @@ function tierOf(points) {
 
 // ═══ 17. 公開 ═══════════════════════════════════════════════════
 ROOT.PRIMA_SIM = {
-  createWorld, step, spawnHero, hero, unitById, addBot, gain, xpFor, capacityOf, maxMp,
-  visibleTo, visibleSpell, normRecipe, recipeResult, spellName, partCount, misfireChance, recipeCost, baseCost, stageCost, windupTime, spellInfo, spellRole, visualShapeOf, lookOf, topKeys, echo,
+  createWorld, addBoss, addStrike, popDecoy, step, spawnHero, hero, unitById, addBot, gain, xpFor, capacityOf, maxMp,
+  visibleTo, visibleSpell, copiesOf, orbitCopiesOf, normRecipe, recipeResult, spellName, partCount, misfireChance, recipeCost, baseCost, stageCost, windupTime, spellInfo, spellRole, visualShapeOf, lookOf, topKeys, echo,
   falloffMul, touchPower, hurtZone, hurtWard, wardPoint, wardDist, nodeBoost, interfere, advance, waitsSignal,
   beginCast, release, fire, detonate, recall, linkedOf, sever, homingTarget,
   damage, kill, rank, runPoints, tierOf, motesNear, mulberry, spellReach, slotFor, autoThink

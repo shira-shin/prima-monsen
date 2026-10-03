@@ -12,7 +12,7 @@ DATA.WORLD = {
   // 魔力（術の燃料）。詠唱を始めるときに先払いする
   // 魔力（術の燃料）。詠唱を始めるときに先払いする。戦場では勝手には戻らない：
   // 光の粒（魔素）を拾うと戻り（mote.mana × 粒の大きさ）、六原理の節点の中でだけ湧き出る（node.regen 毎秒）。修練場では常に戻る
-  mp: { max: 100, perLevel: 4, regen: 0, practice: 24 },
+  mp: { max: 100, perLevel: 4, regen: 0, practice: 24, special: 7 },
   // 詠唱中は遅くなる。放った直後の間
   cast: { slowWhileChant: 0.72, recast: 0.12 },
   // 回避（右クリック / Space）
@@ -42,7 +42,12 @@ DATA.WORLD = {
   // Bot：流派を修めて入る割合と、入場時のレベルの下限の幅（制御容量 5〜7 の術者として入る）
   bot: { schoolShare: .8, levelMin: 3, levelMax: 9 },
   // 位階ポイント：1回の入場で得る点
-  points: { perPeak: 0.2, perKill: 15, place: [[1, 80], [3, 40], [10, 15]] }
+  points: { perPeak: 0.2, perKill: 15, place: [[1, 80], [3, 40], [10, 15]] },
+  // 残酷さ（法則：世界は誰も選ばない）。手負いは追い打ちを受け、血が止まらず、傷は癒えない。落雷は大きく育った者を選んで落ちる
+  //   finish：体力が below 未満の相手への打撃 ×mul ／ bleed：体力が below 未満で打たれると time 秒、毎秒 maxHp × perSec を失う
+  //   noRegen：体力がこれ未満なら自然回復しない ／ strike：落雷。every 秒ごと（範囲）、warn 秒前に予告、半径 r、最大体力の hpShare を奪う。bias の確率で最大の魔素の者を狙う
+  cruel: { finish: { below: .35, mul: 1.35 }, bleed: { below: .5, time: 4, perSec: .014 }, noRegen: .3,
+    strike: { every: [12, 22], warn: 1.8, r: 120, hpShare: .45, bias: .55, motes: 36 } }
 };
 
 
@@ -72,7 +77,7 @@ DATA.chant = {
 // ═══ 03. 術式（器 × 原理 × 段の連鎖） ═══════════════════════════
 // 術 ＝ 1〜3段。段 ＝ { vessel 器, p 原理の点, then 次の段へ移る条件, path 軌道, matter 質, force 力の向き, size 大きさ, time 持続, look 見た目 }
 // レシピ ＝ { v: 3, stages: [段…], link 糸, customName }。必ず sim.js の normRecipe() を通す
-// 原理の点は0〜3の絶対量。薄める配分はない。点を重ねると共鳴して強まる（echo）。
+// 原理の点は0〜3.0の連続値（術式台ではスライダー、0.1刻み）。薄める配分はない。点を重ねると共鳴して強まる（echo は整数の点の間をなめらかにつなぐ）。
 // 制御容量に数えるもの（partCount）＝ 原理の点の合計 ＋ 段のつなぎ（2段目から1つずつ）＋ 糸 ＋ 追尾の軌道
 DATA.craft = {
   maxStages: 3, maxLevel: 3,
@@ -137,6 +142,12 @@ DATA.craft = {
   mend: 3,
   // 相：見える距離（点ごとに縮む）と、印の秒数・打撃の上乗せ
   veil: { range: 520, perLevel: 150, min: 90 }, markTime: 1.5,
+  // 隠れ身：纏の相で姿が薄れる強さ（相の効き目 × per）。近づく・詠唱する・打たれると見える
+  cloak: { per: .38 },
+  // 透過：纏の相が at 点以上で体が透け、弾・線・体を素通りする。魔力を毎秒 drain 払い、撃つ・打つ・魔力切れで解ける
+  ghost: { at: 2.5, drain: 6 },
+  // 分身：纏に相と増の両方を振ると、術者の姿の囮が min(相, 増) 体（最大 max）散らばる。囮は狙いと追尾を引き、割られると纏の「触れたら」が開く
+  clone: { max: 3, speed: 150, drag: 1.6, lifePer: .25 },
   // 質の相性：攻撃の質 → 構造の質 の倍率
   clash: { solidOnEnergy: 1.8, energyOnSolid: .65, rayOnEnergy: 2, rayOnSolid: 1 },
   // 構造の硬さ：固体は硬く、エネルギーは柔らかい
@@ -157,7 +168,7 @@ DATA.craft = {
     ray:   { motion: '遠くまで伸びる', bind: '', divide: '壁を強く削る', convert: '', grow: '{c}本に増える（1本は軽くなる）', phase: '結{n}未満の壁と結界を抜ける' },
     wall:  { motion: '遠くに立ち、照準の向きへ進んで体を押していく', bind: '硬くなる', divide: '', convert: '受け止めた一撃を魔力に変える', grow: '長くなる', phase: '見えにくい' },
     field: { motion: '足元から照準の向きへ流れていく', bind: '弾を止める結界になる', divide: '開いた瞬間、相手の弾を吹き消す', convert: '通り抜ける相手の弾から魔力を吸う', grow: '長く残る', phase: '見えにくい（罠になる）' },
-    body:  { motion: '足が速くなる', bind: '受ける打撃が減る', divide: '鈍化や拘束をほどく', convert: '受けた打撃の一部を魔力に変える', grow: '体が再生する', phase: '姿を隠し、結{n}未満の壁を抜けて歩ける' },
+    body:  { motion: '足が速くなる', bind: '受ける打撃が減る', divide: '鈍化や拘束をほどく', convert: '受けた打撃の一部を魔力に変える', grow: '体が再生する', phase: '姿を隠し、結{n}未満の壁を抜けて歩ける。2.5点で体が透けて弾も体も素通りする（魔力を毎秒使う）。増も振ると分身を残す' },
     orbit: { motion: '速く回る', bind: '刃が硬くなる', divide: '', convert: '受け止めた弾を魔力に変える', grow: '刃が{c}本になる', phase: '見えにくい' }
   }
 };
@@ -214,11 +225,13 @@ DATA.presets = {
   mend:     { label: '再生',       r: RC(ST('body', { grow: 2 })) },
   cloak:    { label: '隠れ身',     r: RC(ST('body', { phase: 2 })) },
   absorb:   { label: '吸収の衣',   r: RC(ST('body', { convert: 2, bind: 1 })) },
+  clone:    { label: '分身',       r: RC(ST('body', { phase: 1.5, grow: 1.5 }, { then: 'hit' }), ST('field', { divide: 1 }, { size: .8, time: .5 })) },
+  phantom:  { label: '透過',       r: RC(ST('body', { phase: 2.5 }, { time: .5 })) },
   ghost:    { label: '壁抜けの弾', r: RC(ST('bolt', { phase: 2, divide: 1 }, { look: 'needle' })) },
   cluster:  { label: '分裂弾',     r: RC(ST('bolt', { divide: 1 }, { then: 'end', time: .4, look: 'shuriken' }), ST('bolt', { grow: 2, divide: 1 }, { size: .8, time: .5 })) }
 };
 DATA.presetOrder = ['bolt', 'lance', 'shotgun', 'seeker', 'chakram', 'ray', 'anchor', 'ghost', 'burst', 'well', 'cluster', 'remote', 'mine',
-  'stoneWall', 'drainWall', 'counterWall', 'barrier', 'guardRing', 'bladeRing', 'haste', 'harden', 'mend', 'cloak', 'absorb'];
+  'stoneWall', 'drainWall', 'counterWall', 'barrier', 'guardRing', 'bladeRing', 'haste', 'harden', 'mend', 'cloak', 'clone', 'phantom', 'absorb'];
 // 術式台で最初に並べる作例
 DATA.presetStarters = ['bolt', 'burst', 'anchor', 'stoneWall', 'bladeRing', 'mend', 'ray', 'mine'];
 // 最初に持っている4つの術（はじめの制御容量4に収まる）
@@ -227,51 +240,51 @@ DATA.defaultSpells = ['bolt', 'burst', 'stoneWall', 'mend'].map(k => DATA.preset
 // keep は相手との間合い。術は 4 つ。術式台の「達人の術」からも読み込める
 const M = (customName, r) => ({ customName, ...r });
 DATA.schools = [
-  { key: 'archer', name: '光芒の射手', keep: 560, spells: [
+  { key: 'archer', name: '光芒の射手', keep: 560, creed: '遠くの一点を、ただ信じる。', cries: { win: ['見えなくても、当たる。'], death: ['星が、ひとつ消えただけだ……。'] }, spells: [
     M('流星', RC(ST('bolt', { divide: 1, motion: 2, grow: 1 }, { look: 'arrow' }))),
     M('天穿', RC(ST('ray', { divide: 3, motion: 1 }))),
     M('砦', RC(ST('wall', { bind: 3 }, { matter: 'solid' }))),
     M('疾風', RC(ST('body', { motion: 2 })))
   ] },
-  { key: 'blade', name: '剣聖', keep: 260, spells: [
+  { key: 'blade', name: '剣聖', keep: 260, creed: '一太刀に、すべてを預ける。', cries: { win: ['斬った。名は、覚えておく。'], death: ['刃が……折れたか……。'] }, spells: [
     M('朧斬', RC(ST('bolt', { divide: 2, motion: 1 }, { look: 'katana' }))),
     M('八重桜', RC(ST('orbit', { divide: 2, grow: 1 }, { matter: 'solid', look: 'katana' }))),
     M('縮地', RC(ST('body', { motion: 3, phase: 1 }, { time: .6 }))),
     M('大鎌・宵薙ぎ', RC(ST('bolt', { divide: 2, motion: 1 }, { matter: 'solid', look: 'scythe', size: 1.5, time: .6 })))
   ] },
-  { key: 'fortress', name: '城塞の主', keep: 300, spells: [
+  { key: 'fortress', name: '城塞の主', keep: 300, creed: '守るとは、崩れ方を選ぶこと。', cries: { win: ['城は、落ちぬ。'], death: ['落ちたのは城ではない……私だ。'] }, spells: [
     M('破城', RC(ST('bolt', { divide: 2, motion: 2 }, { matter: 'solid', look: 'axe' }))),
     M('金城', RC(ST('orbit', { bind: 2, grow: 1 }, { matter: 'solid', look: 'castle' }))),
     M('絶界', RC(ST('field', { bind: 3, convert: 1 }, { size: .8, time: 1.5 }))),
     M('地鳴り', RC(ST('bolt', {}, { path: 'arc', matter: 'solid', look: 'hammer', then: 'hit' }), ST('field', { motion: 2, divide: 1 }, { time: .5 })))
   ] },
-  { key: 'curse', name: '呪術師', keep: 380, spells: [
+  { key: 'curse', name: '呪術師', keep: 380, creed: '恨みは、構造になる。', cries: { win: ['呪いは、あなたが先に選んだ。'], death: ['呪いは……解けないままだ……。'] }, spells: [
     M('瘴気の種', RC(ST('field', { phase: 1 }, { size: .6, time: 2, then: 'hit' }), ST('field', { divide: 1, bind: 1 }, { time: 1.5 }))),
     M('縛鎖', RC(ST('bolt', { bind: 2 }, { path: 'seek' }))),
     M('魂喰らい', RC(ST('bolt', { convert: 2, divide: 1 }, { path: 'seek' }))),
     M('虚ろ穿ち', RC(ST('bolt', { phase: 2, divide: 2 }, { look: 'spear' })))
   ] },
-  { key: 'bomber', name: '爆破師', keep: 330, spells: [
+  { key: 'bomber', name: '爆破師', keep: 330, creed: '壊れるものは、美しく壊れるべきだ。', cries: { win: ['ほら、綺麗でしょう？'], death: ['ははっ……最後まで、花火だ……！'] }, spells: [
     M('爆縛陣', RL(ST('bolt', {}, { then: 'signal', look: 'orb' }), ST('field', { divide: 2, bind: 1 }))),
     M('崩天', RC(ST('bolt', {}, { path: 'arc', then: 'hit', look: 'orb' }), ST('field', { divide: 2, motion: 1 }, { size: 1.2, time: .5 }))),
     M('散華', RC(ST('bolt', { motion: 1 }, { then: 'end', time: .5, look: 'shuriken' }), ST('bolt', { grow: 2, divide: 1 }, { size: .8, time: .5 }))),
     M('反転', RC(ST('wall', { bind: 1, convert: 2 })))
   ] },
-  { key: 'swarm', name: '群れ使い', keep: 420, spells: [
+  { key: 'swarm', name: '群れ使い', keep: 420, creed: '個は散る。群れは残る。', cries: { win: ['一匹ずつは弱くとも。'], death: ['巣が……散ってゆく……。'] }, spells: [
     M('千本桜', RC(ST('bolt', { grow: 3, divide: 1 }, { path: 'seek', size: .7 }))),
     M('三叉雷', RC(ST('bolt', { grow: 2, motion: 1, divide: 1 }))),
     M('奪魂域', RC(ST('bolt', {}, { path: 'arc', then: 'hit' }), ST('field', { convert: 2 }, { time: 1.5 }))),
     M('再生', RC(ST('body', { grow: 2 })))
   ] },
-  { key: 'storm', name: '雷帝', keep: 470, spells: [
+  { key: 'storm', name: '雷帝', keep: 470, creed: '落ちるものに、理由は要らない。', cries: { win: ['雷は、選ばない。'], death: ['雷が……落ちる側になるとはな……。'] }, spells: [
     M('雷槍', RC(ST('bolt', { motion: 2, divide: 1 }, { look: 'spear' }))),
     M('天雷', RC(ST('ray', { divide: 2, grow: 1 }))),
     M('雷鳴環', RC(ST('bolt', {}, { path: 'arc', then: 'hit' }), ST('field', { divide: 1, motion: 1 }, { force: 'spin', time: 1.5 }))),
     M('魔素収束', RC(ST('field', { convert: 2, grow: 1 }, { size: .8 })))
   ] },
-  { key: 'mirror', name: '鏡の魔女', keep: 400, spells: [
+  { key: 'mirror', name: '鏡の魔女', keep: 400, creed: '真実は、反射の中にしかない。', cries: { win: ['映っていたのは、あなたの方。'], death: ['割れた鏡に……私は何人いる……。'] }, spells: [
     M('月輪', RC(ST('bolt', { divide: 2 }, { path: 'return', matter: 'solid', look: 'chakram' }))),
-    M('鏡花', RC(ST('body', { phase: 2 }, { then: 'hit' }), ST('field', { divide: 1, motion: 1 }, { time: .5 }))),
+    M('鏡花', RC(ST('body', { phase: 2, grow: 1 }, { then: 'hit' }), ST('field', { divide: 1, motion: 1 }, { time: .5 }))),
     M('水鏡', RC(ST('wall', { convert: 2, phase: 1 }))),
     M('慣性の鎖', RC(ST('bolt', { bind: 2, motion: 1 }, { path: 'seek', force: 'pull' })))
   ] }
@@ -325,9 +338,31 @@ DATA.rooms = {
   sema: { name: '狭間',     note: '狭く、すぐに撃ち合いになる',   R: 1600, bots: 11, motes: 720, springs: 2, rocks: 6 },
   oo:   { name: '大広間',   note: '広い。大きく育つまで逃げ切れ', R: 3500, bots: 35, motes: 2900, springs: 6, rocks: 16 },
   // 修練場：人形を相手に術を試す。記録は残らない。T で術式台を開いて組み替えられる
+  // スペシャルステージ：位階ポイントが節目に達すると突然開く。得体のしれない演算体と一対一。散れば位階ポイントは0に戻る
+  special: { name: '演算の間', note: '知性ある何かが待っている。散れば、積んだ位階は0に戻る', R: 1250, bots: 0, motes: 0, springs: 0, rocks: 0, special: true },
   dojo: { name: '修練場',   note: '人形を相手に、作った術を試す。記録は残らない', R: 1100, bots: 0, motes: 0, springs: 0, rocks: 3, practice: true }
 };
 DATA.roomOrder = ['ichi', 'sema', 'oo'];
+
+// ═══ 06b. スペシャルステージと演算体 ═══════════════════════════
+// 位階ポイントが at の節目に達すると、その場で突然開く（まだ倒していない最初の段）。散ると位階ポイントは0に戻る。
+// 演算体は脳と回路を思わせる知性。力で押すより、欺く・学ぶ・観測する。
+//   decoyEvery / decoyN：偽の自分（囮）を撒く間隔と数 ／ learnEvery：術者の戦い方を見て術を組み替える間隔
+//   strikeEvery：術者を狙って落ちる雷の間隔 ／ counters：術者が多用した器 → 組み替える術（作例）
+DATA.special = { at: [2000, 6500, 18000] };
+DATA.bosses = [
+  { name: '演算体・萌芽', title: '考え始めたもの', hp: 1100, r: 52, speed: 190, mass: 400, spells: ['seeker', 'ray', 'barrier', 'clone'],
+    decoyEvery: 9, decoyN: 2, learnEvery: 14, strikeEvery: [7, 10], win: '観測を、記録した。', death: '演算……停止……。' },
+  { name: '演算体・皮質', title: '折り畳まれた思考', hp: 2800, r: 62, speed: 205, mass: 800, spells: ['lance', 'seeker', 'guardRing', 'clone'],
+    decoyEvery: 8, decoyN: 3, learnEvery: 11, strikeEvery: [5.5, 8], win: 'あなたの癖は、もう読めた。', death: '予測……できなかった……。' },
+  { name: '総体・脳髄', title: '観測するすべて', hp: 6400, r: 76, speed: 220, mass: 1400, spells: ['ray', 'burst', 'drainWall', 'clone'],
+    decoyEvery: 6.5, decoyN: 4, learnEvery: 8, strikeEvery: [4, 6], win: '全ては、計算の内だった。', death: '私は……ただ、見ていただけ……。' }
+];
+DATA.bossCounters = {
+  bolt: ['stoneWall', 'drainWall', 'guardRing', 'seeker'], ray: ['barrier', 'cloak', 'clone', 'seeker'],
+  wall: ['ray', 'lance', 'burst', 'seeker'], orbit: ['ray', 'burst', 'anchor', 'seeker'],
+  field: ['ray', 'seeker', 'anchor', 'lance'], body: ['ray', 'mine', 'seeker', 'anchor']
+};
 // 修練場の人形：止まる・左右に歩く・壁を張る（石壁で射線を切ってくる）
 DATA.dummies = [
   { name: '人形・止', kind: 'still', ink: 'yellow', x: 420, y: -160, mass: 300 },
@@ -415,7 +450,7 @@ DATA.learning = {
       divide:  ['器そのもの：鋭くなる。構造を削る力が増え、弾は点の数だけ体を貫く。纏なら鈍化や拘束をほどく。', '触れたもの：壊す。いちばん大きな打撃。2点以上で相手の糸も断つ。', '魔力の負荷が重い。固い壁には質と相の組み合わせが要る。'],
       convert: ['器そのもの：受けた魔力を吸う。壁や環が止めた一撃、纏が受けた打撃の一部が自分の魔力に戻る。', '触れたもの：魔力を奪う。奪った分の6割が自分に戻る。', '打撃は増えない。魔力を奪っても相手の体は削れない。'],
       grow:    ['器そのもの：数と時間が増える。弾・線は扇に増え、環は刃が増え、円は長く残り、壁は長くなる。纏なら体が再生する。', '触れたもの：自分の紋を直す。自分の場の中の自分の体や、自分の壁を直す。', '増えた1発は軽くなる（合計は増える）。相手には効かない。'],
-      phase:   ['器そのもの：見えず、結を抜ける。相の点が壁や結界の結の点より多いとすり抜ける。纏なら姿が消え、壁も抜ける。', '触れたもの：印を付ける。印の付いた相手は隠れられず、打撃が少し重くなる。', '近づく・詠唱する・打たれると姿が見える。岩は抜けられない。']
+      phase:   ['器そのもの：見えず、結を抜ける。相の点が壁や結界の結の点より多いとすり抜ける。纏なら姿が消え、壁も抜け、2.5点以上で体が透けて弾や体を素通りする。増も振れば、囮の分身を残す。', '触れたもの：印を付ける。印の付いた相手は隠れられず、打撃が少し重くなる。', '近づく・詠唱する・打たれると姿が見える。岩は抜けられない。透けている間は魔力が減り続ける。']
     },
     vessel: {
       bolt:  ['照準へ飛ぶ魔力の塊。', '基本の攻撃。軌道（放物・追尾・回帰）や段で化ける。', '直進は横へ避けられる。壁に止まる。'],

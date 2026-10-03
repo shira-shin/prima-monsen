@@ -265,7 +265,26 @@ LANG.en = {
     "原理なし。素の魔力だけ。": "No principles: raw mana only. ",
     "器そのもの：{0}。": "Vessel itself: {0}. ",
     "触れたもの：{0}。": "What it touches: {0}. ",
+    "{0}。散れば、積んだ位階は0に戻る": "{0}. If you fall, your rank returns to 0",
+    "観測された": "Observed",
+    "何かが、あなたの紋を読んでいる": "Something is reading your crest",
+    "演算体は沈黙した": "The Calculator fell silent",
+    "すべての演算の間を越えた。黒曜の紋をまとう": "You cleared every Calculation Hall. Obsidian crest worn",
+    "黒曜の紋が刻まれた。次の節目で、また観測される": "An obsidian crest is carved. You will be observed again at the next milestone",
+    "位階は0に戻った。{0}・計 {1} pt": "Rank reset to 0. {0} · {1} pt in total",
+    "もう一度 Esc で退出": "Press Esc again to leave",
+    "逃げれば、位階は0に戻る": "If you flee, your rank returns to 0",
+    "解析：{0}": "Analysis: {0}",
+    "演算体が学習した": "The Calculator has learned",
+    "「{0}」への対策を組んだ": "Built a counter to \"{0}\"",
+    "欺瞞": "Deceit",
+    "解析済み：{0}への対策": "Analyzed: counter to {0}",
+    "こちらの術を観測している": "Observing your spells",
+    "　／　次の観測まで {0} pt": " / {0} pt until the next observation",
     "一撃の打撃 約{0}。": "About {0} per hit. ",
+    "透けている間は弾も体も素通りするが、魔力が毎秒減る。": "While translucent, bolts and bodies pass through you, but mana drains every second. ",
+    "分身を{0}体残す。": "Leaves {0} decoy clone(s). ",
+    "分身": "Clone",
     "{0}、{1}段目を開く。": "{0}, it opens stage {1}. ",
     "糸でつながる（誘導・合図 F・回収 G ができるが、維持費がかかる）。": "Threaded (guide, signal with F, recall with G; costs upkeep).",
     "弾だけが選べる。": "Only bolts can choose this.",
@@ -363,6 +382,10 @@ LANG.en = {
       "oo": {
         "name": "Great Hall",
         "note": "Wide. Survive until you grow big"
+      },
+      "special": {
+        "name": "Calculation Hall",
+        "note": "Something intelligent waits. If you fall, your rank returns to 0"
       },
       "dojo": {
         "name": "Training Hall",
@@ -530,9 +553,34 @@ LANG.en = {
       "win": "Behold — the power of the crest!",
       "death": "Ngh… I can't scatter yet…!"
     },
+    "bosses": [
+      {
+        "name": "Calculator: Sprout",
+        "title": "One who began to think",
+        "win": "Observation, recorded.",
+        "death": "Computation… halted…"
+      },
+      {
+        "name": "Calculator: Cortex",
+        "title": "Folded thought",
+        "win": "Your habits are already read.",
+        "death": "Unpredicted…"
+      },
+      {
+        "name": "The Whole: Cerebrum",
+        "title": "All that observes",
+        "win": "All was within the calculation.",
+        "death": "I… only watched…"
+      }
+    ],
     "schools": [
       {
         "name": "Radiant Archer",
+        "creed": "Trust only one distant point.",
+        "cries": {
+          "win": ["Unseen, it still hits."],
+          "death": ["Only one star went out…"]
+        },
         "spells": [
           {
             "customName": "Meteor"
@@ -550,6 +598,11 @@ LANG.en = {
       },
       {
         "name": "Sword Saint",
+        "creed": "Entrust everything to a single cut.",
+        "cries": {
+          "win": ["Cut. I will remember the name."],
+          "death": ["The blade… broke…"]
+        },
         "spells": [
           {
             "customName": "Moonhaze Cut"
@@ -567,6 +620,11 @@ LANG.en = {
       },
       {
         "name": "Lord of the Keep",
+        "creed": "To defend is to choose how you fall.",
+        "cries": {
+          "win": ["The castle does not fall."],
+          "death": ["It was not the castle that fell… it was me."]
+        },
         "spells": [
           {
             "customName": "Siegebreaker"
@@ -584,6 +642,11 @@ LANG.en = {
       },
       {
         "name": "Hexweaver",
+        "creed": "Grudges become structure.",
+        "cries": {
+          "win": ["You chose the curse first."],
+          "death": ["The curse… stays unbroken…"]
+        },
         "spells": [
           {
             "customName": "Miasma Seed"
@@ -601,6 +664,11 @@ LANG.en = {
       },
       {
         "name": "Demolitionist",
+        "creed": "What breaks should break beautifully.",
+        "cries": {
+          "win": ["See? Isn't it pretty?"],
+          "death": ["Ha… fireworks, to the very end…!"]
+        },
         "spells": [
           {
             "customName": "Blast Seal"
@@ -618,6 +686,11 @@ LANG.en = {
       },
       {
         "name": "Swarm Caller",
+        "creed": "The one scatters. The swarm remains.",
+        "cries": {
+          "win": ["Each one is weak, but…"],
+          "death": ["The nest… is scattering…"]
+        },
         "spells": [
           {
             "customName": "Thousand Petals"
@@ -635,6 +708,11 @@ LANG.en = {
       },
       {
         "name": "Thunder Emperor",
+        "creed": "What falls needs no reason.",
+        "cries": {
+          "win": ["Lightning does not choose."],
+          "death": ["To think I'd be the one struck…"]
+        },
         "spells": [
           {
             "customName": "Thunder Spear"
@@ -652,6 +730,11 @@ LANG.en = {
       },
       {
         "name": "Mirror Witch",
+        "creed": "Truth exists only in reflection.",
+        "cries": {
+          "win": ["It was you who was reflected."],
+          "death": ["In the broken mirror… how many of me…"]
+        },
         "spells": [
           {
             "customName": "Moon Ring"
@@ -867,7 +950,7 @@ LANG.en = {
           "divide": "shakes off slows and binds",
           "convert": "turns part of damage taken into mana",
           "grow": "your body regenerates",
-          "phase": "hides you; walk through walls with Bind below {n}"
+          "phase": "hides you; walk through walls with Bind below {n}. At 2.5 points you turn translucent and bolts and bodies pass through you (drains mana every second). Add Grow to leave decoy clones"
         },
         "orbit": {
           "motion": "circles faster",
@@ -990,6 +1073,12 @@ LANG.en = {
       "cloak": {
         "label": "Cloak"
       },
+      "clone": {
+        "label": "Clone"
+      },
+      "phantom": {
+        "label": "Phantom"
+      },
       "absorb": {
         "label": "Absorbing mantle"
       }
@@ -1070,9 +1159,9 @@ LANG.en = {
             "Each copy is lighter (the total rises). No effect on foes."
           ],
           "phase": [
-            "Vessel itself: unseen, slips through Bind. With more Phase than a wall's or barrier's Bind, it passes through. A mantle hides you and lets you walk through walls.",
+            "Vessel itself: unseen, slips through Bind. With more Phase than a wall's or barrier's Bind, it passes through. A mantle hides you, lets you walk through walls, and at 2.5 points or more turns you translucent so bolts and bodies pass through. Add Grow for decoy clones.",
             "What it touches: marks it. Marked foes cannot hide and take slightly heavier hits.",
-            "Approaching, chanting or being hit reveals you. Rocks cannot be passed."
+            "Approaching, chanting or being hit reveals you. Rocks cannot be passed. Translucence keeps draining mana."
           ]
         },
         "vessel": {
@@ -1442,7 +1531,26 @@ LANG.zh = {
     "原理なし。素の魔力だけ。": "无原理。仅有纯魔力。",
     "器そのもの：{0}。": "器本身：{0}。",
     "触れたもの：{0}。": "触及之物：{0}。",
+    "{0}。散れば、積んだ位階は0に戻る": "{0}。若散去，累积的位阶将归零",
+    "観測された": "被观测了",
+    "何かが、あなたの紋を読んでいる": "有什么正在读取你的纹",
+    "演算体は沈黙した": "演算体沉默了",
+    "すべての演算の間を越えた。黒曜の紋をまとう": "已越过所有演算之间。披上黑曜之纹",
+    "黒曜の紋が刻まれた。次の節目で、また観測される": "黑曜之纹已刻下。下一个节点将再次被观测",
+    "位階は0に戻った。{0}・計 {1} pt": "位阶已归零。{0}・共 {1} pt",
+    "もう一度 Esc で退出": "再按一次 Esc 退出",
+    "逃げれば、位階は0に戻る": "若逃走，位阶将归零",
+    "解析：{0}": "解析：{0}",
+    "演算体が学習した": "演算体已学习",
+    "「{0}」への対策を組んだ": "已组建针对「{0}」的对策",
+    "欺瞞": "欺瞒",
+    "解析済み：{0}への対策": "已解析：针对{0}的对策",
+    "こちらの術を観測している": "正在观测我方的术",
+    "　／　次の観測まで {0} pt": "　／　距下次观测还有 {0} pt",
     "一撃の打撃 約{0}。": "每击约{0}。",
+    "透けている間は弾も体も素通りするが、魔力が毎秒減る。": "透明期间弹与身体都会穿过，但魔力每秒减少。",
+    "分身を{0}体残す。": "留下{0}个分身。",
+    "分身": "分身",
     "{0}、{1}段目を開く。": "{0}，展开第{1}段。",
     "糸でつながる（誘導・合図 F・回収 G ができるが、維持費がかかる）。": "以丝线相连（可引导、F 信号、G 回收，但需维持费）。",
     "弾だけが選べる。": "只有弹可以选择。",
@@ -1540,6 +1648,10 @@ LANG.zh = {
       "oo": {
         "name": "大广间",
         "note": "宽广。坚持到成长壮大"
+      },
+      "special": {
+        "name": "演算之间",
+        "note": "有智慧的存在在等待。若散去，位阶归零"
       },
       "dojo": {
         "name": "修炼场",
@@ -1665,9 +1777,34 @@ LANG.zh = {
       "win": "看见了吗，这就是纹章之力！",
       "death": "可恶……还不能在这里消散……！"
     },
+    "bosses": [
+      {
+        "name": "演算体・萌芽",
+        "title": "开始思考的存在",
+        "win": "观测，已记录。",
+        "death": "演算……停止……"
+      },
+      {
+        "name": "演算体・皮质",
+        "title": "折叠的思考",
+        "win": "你的习惯，我已读懂。",
+        "death": "无法……预测……"
+      },
+      {
+        "name": "总体・脑髓",
+        "title": "观测一切者",
+        "win": "一切都在计算之内。",
+        "death": "我……只是在看着……"
+      }
+    ],
     "schools": [
       {
         "name": "光芒射手",
+        "creed": "只相信远方的一点。",
+        "cries": {
+          "win": ["看不见，也会命中。"],
+          "death": ["只是熄灭了一颗星……"]
+        },
         "spells": [
           {
             "customName": "流星"
@@ -1685,6 +1822,11 @@ LANG.zh = {
       },
       {
         "name": "剑圣",
+        "creed": "将一切托付给一刀。",
+        "cries": {
+          "win": ["斩了。我会记住你的名字。"],
+          "death": ["刀……断了吗……"]
+        },
         "spells": [
           {
             "customName": "胧斩"
@@ -1702,6 +1844,11 @@ LANG.zh = {
       },
       {
         "name": "城塞之主",
+        "creed": "守护，就是选择崩塌的方式。",
+        "cries": {
+          "win": ["城，不会陷落。"],
+          "death": ["陷落的不是城……是我。"]
+        },
         "spells": [
           {
             "customName": "破城"
@@ -1719,6 +1866,11 @@ LANG.zh = {
       },
       {
         "name": "咒术师",
+        "creed": "怨恨会成为结构。",
+        "cries": {
+          "win": ["是你先选了诅咒。"],
+          "death": ["诅咒……仍未解开……"]
+        },
         "spells": [
           {
             "customName": "瘴气之种"
@@ -1736,6 +1888,11 @@ LANG.zh = {
       },
       {
         "name": "爆破师",
+        "creed": "会毁坏的东西，应当美丽地毁坏。",
+        "cries": {
+          "win": ["看，漂亮吧？"],
+          "death": ["哈哈……直到最后，都是烟花……！"]
+        },
         "spells": [
           {
             "customName": "爆缚阵"
@@ -1753,6 +1910,11 @@ LANG.zh = {
       },
       {
         "name": "驭群者",
+        "creed": "个体会散。群体会留。",
+        "cries": {
+          "win": ["一只一只虽弱，但……"],
+          "death": ["巢……正在散去……"]
+        },
         "spells": [
           {
             "customName": "千本樱"
@@ -1770,6 +1932,11 @@ LANG.zh = {
       },
       {
         "name": "雷帝",
+        "creed": "落下之物，无需理由。",
+        "cries": {
+          "win": ["雷，不做选择。"],
+          "death": ["没想到……我会成为被劈的一方……"]
+        },
         "spells": [
           {
             "customName": "雷枪"
@@ -1787,6 +1954,11 @@ LANG.zh = {
       },
       {
         "name": "镜之魔女",
+        "creed": "真相只存在于倒影之中。",
+        "cries": {
+          "win": ["被映出来的，是你。"],
+          "death": ["破碎的镜中……有多少个我……"]
+        },
         "spells": [
           {
             "customName": "月轮"
@@ -2002,7 +2174,7 @@ LANG.zh = {
           "divide": "解除减速与束缚",
           "convert": "把部分受到的伤害化为魔力",
           "grow": "身体再生",
-          "phase": "隐藏身形；可穿过「结」低于{n}的墙"
+          "phase": "隐藏身形；可穿过「结」低于{n}的墙。达到2.5点时身体透明，弹与身体都会穿过（每秒消耗魔力）。再加「增」会留下分身"
         },
         "orbit": {
           "motion": "转得更快",
@@ -2125,6 +2297,12 @@ LANG.zh = {
       "cloak": {
         "label": "隐身"
       },
+      "clone": {
+        "label": "分身"
+      },
+      "phantom": {
+        "label": "透明"
+      },
       "absorb": {
         "label": "吸收之衣"
       }
@@ -2205,9 +2383,9 @@ LANG.zh = {
             "每个复制较轻（总量增加）。对敌人无效。"
           ],
           "phase": [
-            "器本身：隐形并穿过「结」。「相」多于墙或结界的「结」即可穿过。缠会隐藏身形，并能穿墙行走。",
+            "器本身：隐形并穿过「结」。「相」多于墙或结界的「结」即可穿过。缠会隐藏身形并能穿墙行走；达到2.5点以上身体透明，弹与身体都会穿过。再加「增」会留下囮的分身。",
             "触及之物：打上印记。被标记者无法隐身，受击略重。",
-            "靠近、咏唱或被击中会现形。岩石无法穿过。"
+            "靠近、咏唱或被击中会现形。岩石无法穿过。透明期间魔力会持续减少。"
           ]
         },
         "vessel": {
@@ -2577,7 +2755,26 @@ LANG.ko = {
     "原理なし。素の魔力だけ。": "원리 없음. 순수한 마력뿐. ",
     "器そのもの：{0}。": "그릇 자체: {0}. ",
     "触れたもの：{0}。": "닿은 것: {0}. ",
+    "{0}。散れば、積んだ位階は0に戻る": "{0}. 쓰러지면 쌓은 위계가 0으로 돌아간다",
+    "観測された": "관측되었다",
+    "何かが、あなたの紋を読んでいる": "무언가가 당신의 문양을 읽고 있다",
+    "演算体は沈黙した": "연산체가 침묵했다",
+    "すべての演算の間を越えた。黒曜の紋をまとう": "모든 연산의 방을 넘었다. 흑요의 문양을 두른다",
+    "黒曜の紋が刻まれた。次の節目で、また観測される": "흑요의 문양이 새겨졌다. 다음 고비에서 다시 관측된다",
+    "位階は0に戻った。{0}・計 {1} pt": "위계가 0으로 돌아갔다. {0}・합계 {1} pt",
+    "もう一度 Esc で退出": "Esc를 한 번 더 눌러 나가기",
+    "逃げれば、位階は0に戻る": "도망치면 위계가 0으로 돌아간다",
+    "解析：{0}": "해석: {0}",
+    "演算体が学習した": "연산체가 학습했다",
+    "「{0}」への対策を組んだ": "「{0}」에 대한 대책을 짰다",
+    "欺瞞": "기만",
+    "解析済み：{0}への対策": "해석 완료: {0}에 대한 대책",
+    "こちらの術を観測している": "이쪽의 술을 관측하고 있다",
+    "　／　次の観測まで {0} pt": " / 다음 관측까지 {0} pt",
     "一撃の打撃 約{0}。": "한 방 타격 약 {0}. ",
+    "透けている間は弾も体も素通りするが、魔力が毎秒減る。": "투명한 동안 탄과 몸이 그대로 통과하지만 마력이 매초 줄어든다.",
+    "分身を{0}体残す。": "분신을 {0}체 남긴다.",
+    "分身": "분신",
     "{0}、{1}段目を開く。": "{0} {1}단을 연다. ",
     "糸でつながる（誘導・合図 F・回収 G ができるが、維持費がかかる）。": "실로 이어진다(유도·F 신호·G 회수 가능, 유지비가 든다).",
     "弾だけが選べる。": "탄만 고를 수 있다.",
@@ -2675,6 +2872,10 @@ LANG.ko = {
       "oo": {
         "name": "대광간",
         "note": "넓다. 크게 자랄 때까지 살아남아라"
+      },
+      "special": {
+        "name": "연산의 방",
+        "note": "지성을 가진 무언가가 기다린다. 쓰러지면 위계가 0으로 돌아간다"
       },
       "dojo": {
         "name": "수련장",
@@ -2842,9 +3043,34 @@ LANG.ko = {
       "win": "보았느냐, 이것이 문장의 힘이다!",
       "death": "큭… 아직 흩어질 수는…!"
     },
+    "bosses": [
+      {
+        "name": "연산체・맹아",
+        "title": "생각하기 시작한 것",
+        "win": "관측을 기록했다.",
+        "death": "연산……정지……"
+      },
+      {
+        "name": "연산체・피질",
+        "title": "접힌 사고",
+        "win": "당신의 버릇은 이미 읽었다.",
+        "death": "예측……하지 못했다……"
+      },
+      {
+        "name": "총체・뇌수",
+        "title": "관측하는 모든 것",
+        "win": "모든 것은 계산 안에 있었다.",
+        "death": "나는……그저 보고 있었을 뿐……"
+      }
+    ],
     "schools": [
       {
         "name": "광망의 사수",
+        "creed": "먼 곳의 한 점만을 믿는다.",
+        "cries": {
+          "win": ["보이지 않아도 맞는다."],
+          "death": ["별이 하나 꺼졌을 뿐이다……"]
+        },
         "spells": [
           {
             "customName": "유성"
@@ -2862,6 +3088,11 @@ LANG.ko = {
       },
       {
         "name": "검성",
+        "creed": "일격에 모든 것을 맡긴다.",
+        "cries": {
+          "win": ["베었다. 이름은 기억해 두겠다."],
+          "death": ["칼날이… 부러졌나……"]
+        },
         "spells": [
           {
             "customName": "몽롱참"
@@ -2879,6 +3110,11 @@ LANG.ko = {
       },
       {
         "name": "성채의 주인",
+        "creed": "지킨다는 것은 무너지는 방식을 고르는 것.",
+        "cries": {
+          "win": ["성은 무너지지 않는다."],
+          "death": ["무너진 것은 성이 아니다……나다."]
+        },
         "spells": [
           {
             "customName": "파성"
@@ -2896,6 +3132,11 @@ LANG.ko = {
       },
       {
         "name": "주술사",
+        "creed": "원한은 구조가 된다.",
+        "cries": {
+          "win": ["저주를 먼저 고른 건 당신이야."],
+          "death": ["저주는… 풀리지 않은 채로……"]
+        },
         "spells": [
           {
             "customName": "장기의 씨앗"
@@ -2913,6 +3154,11 @@ LANG.ko = {
       },
       {
         "name": "폭파사",
+        "creed": "부서질 것은 아름답게 부서져야 한다.",
+        "cries": {
+          "win": ["봐, 예쁘지?"],
+          "death": ["하하… 끝까지, 불꽃놀이다……!"]
+        },
         "spells": [
           {
             "customName": "폭박진"
@@ -2930,6 +3176,11 @@ LANG.ko = {
       },
       {
         "name": "무리 부리는 자",
+        "creed": "개체는 흩어지고, 무리는 남는다.",
+        "cries": {
+          "win": ["한 마리씩은 약하지만."],
+          "death": ["둥지가… 흩어져 간다……"]
+        },
         "spells": [
           {
             "customName": "천본앵"
@@ -2947,6 +3198,11 @@ LANG.ko = {
       },
       {
         "name": "뇌제",
+        "creed": "떨어지는 것에 이유는 필요 없다.",
+        "cries": {
+          "win": ["번개는 고르지 않는다."],
+          "death": ["내가 맞는 쪽이 될 줄이야……"]
+        },
         "spells": [
           {
             "customName": "뇌창"
@@ -2964,6 +3220,11 @@ LANG.ko = {
       },
       {
         "name": "거울의 마녀",
+        "creed": "진실은 반사 속에만 있다.",
+        "cries": {
+          "win": ["비친 것은 당신 쪽이었어."],
+          "death": ["깨진 거울에… 나는 몇 명이나……"]
+        },
         "spells": [
           {
             "customName": "월륜"
@@ -3179,7 +3440,7 @@ LANG.ko = {
           "divide": "둔화와 속박을 푼다",
           "convert": "받은 타격의 일부를 마력으로 바꾼다",
           "grow": "몸이 재생한다",
-          "phase": "모습을 감추고 「결」{n} 미만의 벽을 통과해 걷는다"
+          "phase": "모습을 감추고 「결」{n} 미만의 벽을 통과해 걷는다. 2.5점이면 몸이 투명해져 탄과 몸을 그대로 통과시킨다(매초 마력 소모). 「증」도 주면 분신을 남긴다"
         },
         "orbit": {
           "motion": "빨리 돈다",
@@ -3302,6 +3563,12 @@ LANG.ko = {
       "cloak": {
         "label": "은신"
       },
+      "clone": {
+        "label": "분신"
+      },
+      "phantom": {
+        "label": "투명"
+      },
       "absorb": {
         "label": "흡수의 옷"
       }
@@ -3382,9 +3649,9 @@ LANG.ko = {
             "늘어난 한 발은 가벼워진다(합계는 늘어난다). 상대에게는 효과가 없다."
           ],
           "phase": [
-            "그릇 자체: 보이지 않고 「결」을 통과한다. 「상」이 벽이나 결계의 「결」보다 많으면 통과한다. 두름이면 모습이 사라지고 벽도 지나간다.",
+            "그릇 자체: 보이지 않고 「결」을 통과한다. 「상」이 벽이나 결계의 「결」보다 많으면 통과한다. 두름이면 모습이 사라지고 벽도 지나가며, 2.5점 이상이면 몸이 투명해져 탄과 몸을 통과시킨다. 「증」도 주면 미끼 분신을 남긴다.",
             "닿은 것: 표식을 남긴다. 표식이 붙은 상대는 숨을 수 없고 타격이 조금 무거워진다.",
-            "다가가거나, 영창하거나, 맞으면 모습이 드러난다. 바위는 통과할 수 없다."
+            "다가가거나, 영창하거나, 맞으면 모습이 드러난다. 바위는 통과할 수 없다. 투명한 동안 마력이 계속 줄어든다."
           ]
         },
         "vessel": {
