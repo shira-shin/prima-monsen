@@ -1001,6 +1001,22 @@ function skyCrack(v, at = 0) {
   sub(70, 26, 1.3, 0.6 * v, at + 0.01);
   rumble(2.6, 0.4 * v, 430, at + 0.07);
 }
+// 空気を灼き割く高温：超高域の雑音が一気に降りてくる
+function airTear(v, at = 0) {
+  hiss('bandpass', 13000, 2800, 2.5, 0.5, 0.55 * v, { attack: 0.002, at, dest: audio.shaper });
+  hiss('highpass', 7000, 11000, 0.8, 0.35, 0.32 * v, { attack: 0.003, at });
+  osc('sawtooth', 5400, 170, 0.22, 0.1 * v, { attack: 0.002, at, dest: audio.shaper });
+  osc('square', 2700, 90, 0.2, 0.045 * v, { attack: 0.002, at, dest: audio.shaper });
+}
+// ガラスが割れる音：高い細かな破片が、ばらばらの高さと間隔で降る
+function glassBreak(v, dur = 0.7, at = 0) {
+  hiss('highpass', 6000, 3500, 1.5, 0.12, 0.38 * v, { attack: 0.001, at, dest: audio.shaper });
+  for (let i = 0; i < 30; i++) {
+    const tt = at + Math.pow(Math.random(), 1.6) * dur, f = 2300 + Math.random() * 7500;
+    osc('sine', f, f * 0.95, 0.04 + Math.random() * 0.13, 0.05 * v * (0.3 + Math.random() * 0.7), { attack: 0.0006, at: tt });
+    if (i % 3 === 0) hiss('highpass', 5000 + Math.random() * 4500, 3000, 2, 0.025, 0.14 * v, { at: tt });
+  }
+}
 // 暗い和音：短調の和音が低く沈む。詠唱の「闇」の気配
 function darkChord(root, v, dur = 1.1, at = 0) {
   [1, 1.189, 1.498, 2].forEach((m, i) => osc('sawtooth', root * m, root * m * 1.004, dur, 0.022 * v, { attack: 0.14, at, dest: audio.dark }));
@@ -1192,7 +1208,9 @@ function sfx(name, vol = 1, arg) {
     case 'beam':
       // 先端の破裂を短く、空気の裂ける尾を長く残す。
       playTexture('arc', 'beam', v * 0.6, 0.9 + (ROOT[arg && arg.a] || 180) / 1800);
-      skyCrack(v * 0.95);
+      airTear(v);
+      glassBreak(v * 1.1, 0.8, 0.02);
+      skyCrack(v * 0.8, 0.02);
       osc('sawtooth', 58, 60, 0.6, 0.05 * v, { attack: 0.02, dest: audio.shaper });
       darkChord((ROOT[arg && arg.a] || 180) * 0.5, v, 1.3);
       break;
@@ -1571,18 +1589,18 @@ function drawArena(inView) {
   const R = world.R, t = world.t;
   ctx.save();
   ctx.lineCap = 'round';
-  // 床に生えた結晶の群れ：六原理の色の石が、石畳の隙間から伸びている（場所は決まっている）
+  // 魔素の溜まり：六原理の色の光が、石畳の隙間からゆっくり立ちのぼる（場所は決まっている）
   for (let i = 0; i < (LOW ? 20 : 54); i++) {
     const a = i * 2.399963 + 1.1, d = Math.sqrt((i + 0.7) / 54) * (R - 200), x = Math.cos(a) * d, y = Math.sin(a) * d;
     if (!inView(x, y, 70)) continue;
-    const ink = D.inkOrder[i % 8], cc = hex(ink), n = 1 + (i % 3);
-    ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = 0.1 + Math.sin(t * 0.8 + i) * 0.05; ctx.drawImage(glow(ink), x - 60, y - 60, 120, 120); ctx.restore();
-    for (let j = 0; j < n; j++) {
-      const h = 18 + ((i * 7 + j * 13) % 26);
-      ctx.save(); ctx.translate(x + (j - (n - 1) / 2) * h * 0.5, y - h * 0.42 + (j % 2) * 5); ctx.scale(0.5, 1); ctx.globalAlpha = 0.78; drawGem(ctx, h * 0.5, cc, 0, 6, t, i + j); ctx.restore();
+    const ink = D.inkOrder[i % 8], cc = hex(ink);
+    ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = 0.1 + Math.sin(t * 0.8 + i) * 0.04; ctx.drawImage(glow(ink), x - 52, y - 52, 104, 104); ctx.restore();
+    for (let j = 0; j < 3; j++) {
+      const ph = (t * 0.16 + i * 0.37 + j * 0.31) % 1, h = 34 + ((i * 7 + j * 13) % 22);
+      ctx.save(); ctx.translate(x + Math.sin(ph * 6 + i + j) * 7 + (j - 1) * 9, y - ph * h * 1.8); ctx.globalAlpha = Math.sin(ph * Math.PI) * 0.75; drawGem(ctx, 2.6 + (j % 2) * 1.4, cc, 0, 0, t, i + j); ctx.restore();
     }
   }
-  // 床の結晶の輝き：石畳に埋まった欠片が、ゆっくり瞬く（場所は決まっている）
+  // 床の魔素の瞬き：石畳の下で光の粒が、ゆっくり瞬く（場所は決まっている）
   if (!LOW) for (let i = 0; i < 90; i++) {
     const a = i * 2.399963, d = Math.sqrt((i + 0.5) / 90) * (R - 120), x = Math.cos(a) * d, y = Math.sin(a) * d;
     if (!inView(x, y, 20)) continue;
@@ -2697,54 +2715,27 @@ function drawTrail(s, w0) {
   // 軌跡に残る輝き：通り過ぎたあとに星が瞬く
   for (let i = 1; i <= (LOW ? 2 : 4); i++) { const k = Math.floor(n * i / 5) * 2, tw = Math.max(0, Math.sin(world.t * 17 + i * 2.1 + s.id)); drawStar(ctx, tr[k], tr[k + 1], w0 * (1.4 + tw * 1.6), '#ffffff', 0.25 + tw * 0.65); }
 }
-// ─── 宝石：面取りされた石。面ごとに光の当たり方が違い、角に白い輝きが走る ───
-const gemRGB = h => { const n = parseInt(h.slice(1), 16); return [n >> 16, (n >> 8) & 255, n & 255]; };
-// 色 h を k 倍にし、w の割合だけ白へ寄せる
-function gemMix(h, k, w) { const [r, gg, b] = gemRGB(h), m = v => Math.round(Math.min(255, v * k + (255 - v * k) * w)); return `rgb(${m(r)},${m(gg)},${m(b)})`; }
-// 四方向に伸びる輝き
+// ─── 魔素の光：この世界はすべて魔素でできていて、光は魔素であり命でもある ───
+// 四方向に伸びる輝き（レンズの光芒）
 function drawStar(g, x, y, s, col, a) {
   if (a <= 0.01) return;
   g.save(); g.translate(x, y); g.globalAlpha *= a; g.fillStyle = col;
   for (const rot of [0, Math.PI / 2]) {
-    g.save(); g.rotate(rot); g.beginPath(); g.moveTo(-s, 0); g.lineTo(0, -s * 0.12); g.lineTo(s, 0); g.lineTo(0, s * 0.12); g.closePath(); g.fill(); g.restore();
+    g.save(); g.rotate(rot); g.beginPath(); g.moveTo(-s, 0); g.lineTo(0, -s * 0.1); g.lineTo(s, 0); g.lineTo(0, s * 0.1); g.closePath(); g.fill(); g.restore();
   }
   g.restore();
 }
-// 面取りの宝石を原点に描く。光は左上から。回すと面の明暗が移り、ときどき角が白く光る
+// 魔素の光の塊を原点に描く：白く熱い芯と、色を帯びた淡い光。ゆっくり脈打ち、ときどき輝きが走る（面取りの石ではない）
 function drawGem(g, r, col, rot = 0, n = 8, t = 0, seed = 0) {
-  if (LOW) n = Math.min(n, 6);
-  const rim = [], tab = [];
-  for (let i = 0; i < n; i++) {
-    const a = i / n * TAU, rr = r * (i % 2 ? 0.86 : 1);
-    rim.push([Math.cos(a) * rr, Math.sin(a) * rr]); tab.push([Math.cos(a + 0.22) * r * 0.46, Math.sin(a + 0.22) * r * 0.46]);
-  }
-  g.save(); g.rotate(rot);
-  const light = -2.3 - rot, a0 = g.globalAlpha;
-  for (let i = 0; i < n; i++) {
-    const j = (i + 1) % n, k = 0.5 + 0.5 * Math.cos((i + 0.5) / n * TAU - light);
-    g.fillStyle = gemMix(col, 0.3 + 0.9 * k, k * k * 0.45);
-    g.beginPath(); g.moveTo(rim[i][0], rim[i][1]); g.lineTo(rim[j][0], rim[j][1]); g.lineTo(tab[j][0], tab[j][1]); g.lineTo(tab[i][0], tab[i][1]); g.closePath(); g.fill();
-  }
-  const gr = g.createLinearGradient(-r * 0.45, -r * 0.45, r * 0.45, r * 0.45);
-  gr.addColorStop(0, gemMix(col, 1.15, 0.75)); gr.addColorStop(1, gemMix(col, 0.5, 0.05));
-  g.fillStyle = gr; g.beginPath(); tab.forEach((p, i) => i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1])); g.closePath(); g.fill();
-  g.strokeStyle = 'rgba(255,255,255,.55)'; g.lineWidth = Math.max(0.5, r * 0.05);
-  g.beginPath();
-  for (let i = 0; i < n; i++) { g.moveTo(rim[i][0], rim[i][1]); g.lineTo(tab[i][0], tab[i][1]); }
-  rim.forEach((p, i) => i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1])); g.closePath(); g.stroke();
-  g.restore();
-  // 屈折の縁：片側が冷たい青、反対側が暖かい赤にずれる
-  if (!LOW && r > 4) {
-    g.save(); g.globalCompositeOperation = 'lighter'; g.lineWidth = Math.max(0.6, r * 0.06);
-    g.strokeStyle = 'rgba(120,200,255,.28)'; g.beginPath(); g.arc(-r * 0.05, -r * 0.04, r * 1.02, Math.PI * 0.55, Math.PI * 1.2); g.stroke();
-    g.strokeStyle = 'rgba(255,150,170,.28)'; g.beginPath(); g.arc(r * 0.05, r * 0.04, r * 1.02, -Math.PI * 0.45, Math.PI * 0.2); g.stroke();
-    g.restore();
-  }
-  g.globalAlpha = a0;
-  const tw = Math.max(0, Math.sin(t * 5.5 + seed * 1.7));
+  const pulse = 0.88 + 0.12 * Math.sin(t * 6 + seed * 1.3), a0 = g.globalAlpha;
   g.save(); g.globalCompositeOperation = 'lighter';
-  drawStar(g, -r * 0.32, -r * 0.36, r * (0.5 + tw * 0.9), '#ffffff', 0.5 + tw * 0.5);
+  g.globalAlpha = a0 * 0.55 * pulse; g.drawImage(glow(col), -r * 2.6, -r * 2.6, r * 5.2, r * 5.2);
+  g.globalAlpha = a0 * 0.95; g.drawImage(hotGlow(col), -r * 1.35 * pulse, -r * 1.35 * pulse, r * 2.7 * pulse, r * 2.7 * pulse);
+  g.globalAlpha = a0 * 0.9; g.fillStyle = '#fffaf0'; g.beginPath(); g.arc(0, 0, r * 0.32 * pulse, 0, TAU); g.fill();
+  const tw = Math.max(0, Math.sin(t * 5 + seed * 1.7));
+  g.globalAlpha = a0; drawStar(g, 0, 0, r * (0.9 + tw * 1.1), '#ffffff', 0.2 + tw * 0.5);
   g.restore();
+  g.globalAlpha = a0;
 }
 // ─── 形（刀・日本刀・手裏剣・槍・針・球・結晶） ───
 // 原点に置き、+x の向きに描く。s は大きさの単位（全長はおよそ 5s）
