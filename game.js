@@ -820,7 +820,8 @@ function consumeEvents() {
           stain(e.x, e.y, e.r * 1.5, e.ink, 16);
           ringFx(e.x, e.y, e.r, e.r * 2.2, e.ink, 0.35, 2);
           if (audio.ctx && profile.sfx && audio.ctx.state === 'running') {
-            withPan(e.x, () => { playTexture('arc', 'impact', vol(e.x, e.y) * 0.5, 0.7); playTexture('metal', 'impact', vol(e.x, e.y) * 0.22, 0.8, 0.48); });
+            withPan(e.x, () => { playTexture('arc', 'impact', vol(e.x, e.y) * 0.4, 0.7); });
+            sfxAt('defeat', (e.victim === meId ? 1 : 0.8) * vol(e.x, e.y), null, e.x);
           }
         }
         if (world.room.special && world.boss && e.victim === world.boss.id && mode === 'play' && !winT) specialWon();
@@ -851,7 +852,7 @@ function consumeEvents() {
         break;
       case 'pickup':
         pickupCombo = Math.min(24, pickupCombo + 1); pickupT = 0.4;
-        sfx('pickup', Math.min(1, 0.4 + e.v * 0.15), pickupCombo);
+        sfx('pickup', Math.min(0.6, 0.25 + e.v * 0.08), pickupCombo);
         break;
     }
   }
@@ -1056,6 +1057,16 @@ function beamSound(r, v) {
   rumble(vary(2, 0.2), 0.3 * v, 380, 0.08);
   for (let i = 0; i < 6; i++) hiss('highpass', 3500 + Math.random() * 5000, 2500, 1.5, 0.02, 0.14 * v, { at: 0.03 + Math.random() * dur });
 }
+// 倒される：体を保てなくなる。崩れ落ちる重低音、ほどける息、力が抜けて落ちていく音程、灰の降る気配
+function defeatSound(v) {
+  sub(vary(62, 0.08), 20, 2.2, 0.7 * v);
+  hiss('lowpass', 2600, 90, 0.8, 1.4, 0.34 * v, { attack: 0.004 });
+  osc('sine', vary(330, 0.08), 80, 1.6, 0.09 * v, { attack: 0.05, detune: 8 });
+  osc('sine', vary(332, 0.08), 82, 1.6, 0.09 * v, { attack: 0.05, detune: -8 });
+  darkChord(55, v, 2.2, 0.05);
+  rumble(2.2, 0.22 * v, 260, 0.1);
+  for (let i = 0; i < 10; i++) hiss('bandpass', 3200 - i * 160, 1400, 3, 0.07, 0.05 * v, { at: 0.35 + i * 0.13 });
+}
 // 暗い和音：短調の和音が低く沈む。詠唱の「闇」の気配
 function darkChord(root, v, dur = 1.1, at = 0) {
   [1, 1.189, 1.498, 2].forEach((m, i) => osc('sawtooth', root * m, root * m * 1.004, dur, 0.022 * v, { attack: 0.14, at, dest: audio.dark }));
@@ -1251,7 +1262,7 @@ function sfxAt(name, vol, arg, x) { if (vol > 0.01) withPan(x, () => sfx(name, v
 function sfx(name, vol = 1, arg) {
   if (!audio.ctx || !profile.sfx || audio.ctx.state !== 'running') return;
   const now = audio.ctx.currentTime;
-  const gap = { cast: 0.04, hit: 0.03, pickup: 0.035, hurt: 0.06, thud: 0.08, absorb: 0.06, reflect: 0.06, blast: 0.06, shatter: 0.05, clang: 0.05, pierce: 0.05, strip: 0.06 }[name] || 0;
+  const gap = { cast: 0.04, hit: 0.03, pickup: 0.08, hurt: 0.06, thud: 0.08, absorb: 0.06, reflect: 0.06, blast: 0.06, shatter: 0.05, defeat: 0.3, clang: 0.05, pierce: 0.05, strip: 0.06 }[name] || 0;
   if (gap && now - (audio.last[name] || 0) < gap) return;
   audio.last[name] = now;
   const v = vol;
@@ -1304,9 +1315,10 @@ function sfx(name, vol = 1, arg) {
     case 'dodge': hiss('bandpass', 600, 4200, 1, 0.22, 0.24); osc('sine', 300, 900, 0.12, 0.04); break;
     case 'select': osc('sine', 1100 + (arg || 0) * 150, 1100 + (arg || 0) * 150, 0.08, 0.035); osc('sine', 2200 + (arg || 0) * 300, 2200, 0.04, 0.015); break;
     case 'kill': sub(64, 24, 1.1, 0.5 * v); hiss('lowpass', 1800, 80, 0.8, 0.8, 0.22 * v, { attack: 0.004 }); break;
-    case 'pickup': { const n = PENTA[Math.min(PENTA.length - 1, Math.floor(arg / 2.4))], f = 1320 * Math.pow(2, n / 12); chime(f, 0.03 * v, 0.55); break; }
+    case 'pickup': { const n = PENTA[Math.min(PENTA.length - 1, Math.floor(arg / 2.4))], f = 1320 * Math.pow(2, n / 12); osc('sine', f, f, 0.09, 0.011 * v, { attack: 0.004 }); break; }
     case 'level': [0, 4, 7, 11, 14].forEach((n, i) => osc('sine', 523 * Math.pow(2, n / 12), 523 * Math.pow(2, n / 12), 1.3, 0.05, { at: i * 0.07, attack: 0.02 })); hiss('bandpass', 1000, 8000, 1, 1, 0.08, { attack: 0.4 }); break;
     case 'surge': hiss('bandpass', 300, 1400, 0.8, 0.8, 0.14 * v, { attack: 0.3 }); thump(70, 35, 0.8, 0.25 * v, 0.3); break;
+    case 'defeat': defeatSound(v); break;
     case 'down': hiss('lowpass', 700, 100, 0.6, 0.8, 0.12); thump(65, 25, 0.5, 0.22); break;
     // 落雷：予告の和音が上がり、白い雷が落ち、遠くへ轟く
     case 'strikeWarn': [0, 7, 12].forEach((n, i) => osc('sine', 880 * Math.pow(2, n / 12), 892 * Math.pow(2, n / 12), 0.5, 0.05 * v, { at: i * 0.18, attack: 0.02 })); hiss('highpass', 6000, 6000, 1, 0.5, 0.05 * v, { attack: 0.4 }); break;
