@@ -454,6 +454,14 @@ function spray(x, y, ink, n, speed, dir = null, spread = Math.PI, size = 4) {
     parts.push({ kind: 'spark', x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, r: rnd(0.5, 1.2) * size, ink, t: 0, life: rnd(0.3, 0.65) });
   }
 }
+// 宝石の欠片：面取りの石がはじけて舞い、ゆっくり回りながら光を返して消える
+function gemBurst(x, y, ink, n, speed, size = 6, dir = null, spread = Math.PI) {
+  if (REDUCED && n > 8) n = 8;
+  for (let i = 0; i < n; i++) {
+    const a = dir === null ? rnd(0, TAU) : dir + rnd(-spread, spread), s = rnd(0.3, 1) * speed;
+    parts.push({ kind: 'gem', x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, r: rnd(0.6, 1.25) * size, ink: i % 4 === 3 ? '#e9e6f3' : ink, rot: rnd(0, TAU), spin: rnd(-6, 6), n: 4 + (i % 4), t: 0, life: rnd(0.7, 1.4) });
+  }
+}
 function ringFx(x, y, r0, r1, ink, life = 0.45, width = 5) { parts.push({ kind: 'ring', x, y, r0, r1, ink, t: 0, life, width }); }
 function flash(x, y, r, ink, life = 0.25) { parts.push({ kind: 'flash', x, y, r, ink, t: 0, life }); }
 function circleFx(x, y, r, ink, life = 0.6) { parts.push({ kind: 'circle', x, y, r, ink, t: 0, life, rot: rnd(0, TAU), rune: Math.floor(rnd(0, 28)) }); }
@@ -559,6 +567,7 @@ function consumeEvents() {
         const u = S.unitById(world, e.id);
         if (!u || !near(u.x, u.y)) break;
         const tip = staffTip(u);
+        gemBurst(tip.x, tip.y, e.col, 7, 280, 5, e.aim, 0.5);
         // 放つ瞬間：杖先がはじけ、前へ光の筋が走り、小さな衝撃波が出る
         flash(tip.x, tip.y, 46, e.col, 0.18);
         shockFx(tip.x, tip.y, 34, e.col, 0.22);
@@ -609,6 +618,7 @@ function consumeEvents() {
           for (let i = 0; i < 3; i++) arcFx(e.x, e.y, 30 + e.dmg, e.col, 0.12);
           ringFx(e.x, e.y, 6, 30 + e.dmg * 1.4, e.col, 0.3, 2.5);
         }
+        if (!e.shielded) gemBurst(e.x, e.y, e.col, 7 + Math.min(12, Math.round(e.dmg / 2.5)), 360 + e.dmg * 4, 6 + Math.min(7, e.dmg * 0.25), dir, 1.1);
         if (!e.shielded) {
           // 命中：衝撃波・抜けていく火の粉・強い一撃には光芒と煙
           shockFx(e.x, e.y, 28 + e.dmg * 1.5, e.col, 0.32);
@@ -775,7 +785,7 @@ function consumeEvents() {
         if (near(e.x, e.y)) {
           parts.push({ kind: 'beam', x: e.x, y: e.y - 900, x2: e.x, y2: e.y, w: 18, ink: '#e9e6ff', t: 0, life: 0.5 });
           flash(e.x, e.y, e.r * 1.8, '#e9e6ff', 0.32); shockFx(e.x, e.y, e.r * 1.5, '#ffffff', 0.5); ringFx(e.x, e.y, e.r * 0.3, e.r * 1.4, '#cfd8ff', 0.5, 4);
-          spray(e.x, e.y, '#cfd8ff', 24, 420, null, Math.PI, 3); stain(e.x, e.y, e.r * 1.2, '#7a1f2b', 22);
+          spray(e.x, e.y, '#cfd8ff', 24, 420, null, Math.PI, 3); gemBurst(e.x, e.y, '#cfd8ff', 26, 560, 9); stain(e.x, e.y, e.r * 1.2, '#7a1f2b', 22);
           shake(10); flashScreen('#cfd8ff', 0.2);
           sfxAt('strike', vol(e.x, e.y), null, e.x);
         }
@@ -803,6 +813,7 @@ function consumeEvents() {
         const involved = e.killer === meId || e.victim === meId;
         if (near(e.x, e.y)) {
           const victim = S.unitById(world, e.victim);
+          gemBurst(e.x, e.y - e.r, e.ink, 44, 520, 11);
           parts.push({ kind: 'defeat', x: e.x, y: e.y, r: e.r, ink: e.ink, t: 0, life: 2.2, dir: victim && victim.vx < 0 ? -1 : 1 });
           flash(e.x, e.y - e.r, e.r * 1.5, '#fffaf0', 0.09);
           smokeFx(e.x, e.y, e.r, 4);
@@ -855,7 +866,7 @@ function updateFx(dt) {
     if (p.t > p.life) { parts.splice(i, 1); continue; }
     if (p.vx !== undefined) {
       p.x += p.vx * dt; p.y += p.vy * dt;
-      const f = Math.pow(p.kind === 'rise' || p.kind === 'petal' ? 0.5 : p.kind === 'ember' ? 0.14 : 0.04, dt); p.vx *= f; p.vy *= f;
+      const f = Math.pow(p.kind === 'rise' || p.kind === 'petal' ? 0.5 : p.kind === 'gem' ? 0.22 : p.kind === 'ember' ? 0.14 : 0.04, dt); p.vx *= f; p.vy *= f;
       if (p.kind === 'petal') p.vy += 40 * dt;
     }
     if (p.spin) p.rot += p.spin * dt;
@@ -921,7 +932,7 @@ function unlockAudio() {
       for (const [ms, gn] of [[9, 0.8], [17, 0.55], [29, 0.5], [41, 0.38], [58, 0.3], [83, 0.22]]) d[Math.floor(a.sampleRate * (ms + c * 3.7) / 1000)] += gn * (c ? -1 : 1) * 0.7;
     }
     audio.verb = a.createConvolver(); audio.verb.buffer = ir;
-    const wet = a.createGain(); wet.gain.value = 0.3;
+    const wet = a.createGain(); wet.gain.value = 0.5;
     audio.verb.connect(wet); wet.connect(audio.master);
     audio.bus = a.createGain(); audio.bus.connect(audio.master); audio.bus.connect(audio.verb);
     const nl = Math.floor(a.sampleRate * 1.2), nb = a.createBuffer(1, nl, a.sampleRate), ch = nb.getChannelData(0);
@@ -971,7 +982,7 @@ function thump(f0, f1, dur, vol, at = 0) { osc('sine', f0, f1, dur, vol, { attac
 function crackle(dur, vol, n = 6) { for (let i = 0; i < n; i++) hiss('highpass', 3000 + Math.random() * 4000, 2500, 1.5, 0.018, vol * (0.4 + Math.random() * 0.6), { at: Math.random() * dur }); }
 // 結晶・ガラスの響き：割り切れない比の部分音が重なり、高いものほど速く消える。宝石を弾いたような音
 const GLASS = [1, 2.76, 5.4, 8.93];
-function chime(f, v, dur = 1.4, o = {}) { GLASS.forEach((m, i) => osc('sine', f * m, f * m * 0.998, dur / (1 + i * 0.9), v / (1 + i * 1.4), { attack: 0.0008 + i * 0.0006, at: o.at || 0, dest: o.dest })); }
+function chime(f, v, dur = 1.4, o = {}) { v *= 2.4; GLASS.forEach((m, i) => osc('sine', f * m, f * m * 0.998, dur / (1 + i * 0.9), v / (1 + i * 1.4), { attack: 0.0008 + i * 0.0006, at: o.at || 0, dest: o.dest })); }
 const PENTA = [0, 2, 4, 7, 9, 12, 14, 16, 19, 21, 24];
 // 原理ごとの詠唱の響きの根音（Hz）
 const ROOT = { motion: 220, bind: 164.8, divide: 146.8, convert: 130.8, grow: 196, phase: 185 };
@@ -1027,8 +1038,10 @@ function playTexture(material, stage, v, rate = 1, delay = 0) {
 function materialSound(r, v, impact = false) {
   const ratio = (ROOT[r.a] || 180) / 180, second = (ROOT[r.b] || ROOT[r.a] || 180) / 180;
   playTexture(materialOf(r), impact ? 'impact' : 'launch', v * 0.75, 0.8 + ratio * 0.15 + second * 0.05);
-  // 原理の根音から取った結晶の響きを一粒重ねる
-  chime((ROOT[r.a] || 180) * (impact ? 12 : 8), (impact ? 0.034 : 0.026) * v, impact ? 1.3 : 0.7);
+  // 原理の根音から取った結晶の響きを重ねる。放つときは三音の上昇、当たるときは砕ける高音と地鳴り
+  const root = ROOT[r.a] || 180;
+  if (impact) { thump(78, 28, 0.55, 0.32 * v); for (let i = 0; i < 3; i++) chime(root * (10 + i * 4.5) * (1 + Math.random() * 0.06), 0.03 * v, 1.2, { at: i * 0.025 }); }
+  else [0, 7, 12].forEach((n, i) => chime(root * 4 * Math.pow(2, n / 12), 0.034 * v, 0.9, { at: i * 0.04 }));
 }
 function stopFlightVoice(s, voice) {
   const t = audio.ctx.currentTime;
@@ -1511,6 +1524,17 @@ function drawArena(inView) {
   const R = world.R, t = world.t;
   ctx.save();
   ctx.lineCap = 'round';
+  // 床に生えた結晶の群れ：六原理の色の石が、石畳の隙間から伸びている（場所は決まっている）
+  for (let i = 0; i < (LOW ? 20 : 54); i++) {
+    const a = i * 2.399963 + 1.1, d = Math.sqrt((i + 0.7) / 54) * (R - 200), x = Math.cos(a) * d, y = Math.sin(a) * d;
+    if (!inView(x, y, 70)) continue;
+    const ink = D.inkOrder[i % 8], cc = hex(ink), n = 1 + (i % 3);
+    ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = 0.1 + Math.sin(t * 0.8 + i) * 0.05; ctx.drawImage(glow(ink), x - 60, y - 60, 120, 120); ctx.restore();
+    for (let j = 0; j < n; j++) {
+      const h = 18 + ((i * 7 + j * 13) % 26);
+      ctx.save(); ctx.translate(x + (j - (n - 1) / 2) * h * 0.5, y - h * 0.42 + (j % 2) * 5); ctx.scale(0.5, 1); ctx.globalAlpha = 0.78; drawGem(ctx, h * 0.5, cc, 0, 6, t, i + j); ctx.restore();
+    }
+  }
   // 床の結晶の輝き：石畳に埋まった欠片が、ゆっくり瞬く（場所は決まっている）
   if (!LOW) for (let i = 0; i < 90; i++) {
     const a = i * 2.399963, d = Math.sqrt((i + 0.5) / 90) * (R - 120), x = Math.cos(a) * d, y = Math.sin(a) * d;
@@ -1817,6 +1841,16 @@ function drawZone(z) {
     const gn = LOW ? 3 : 6, gs = Math.max(5, Math.min(14, z.zr * 0.09));
     for (let i = 0; i < gn; i++) { const a2 = i / gn * TAU; ctx.save(); ctx.translate(Math.cos(a2) * z.zr, Math.sin(a2) * z.zr); ctx.globalAlpha = 0.9 * fade; drawGem(ctx, gs, c, t * 0.8 + i, 6, t, z.id + i); ctx.restore(); }
     ctx.restore();
+  }
+  // 床から生える結晶の柱：開いた瞬間に伸び、残る間は脈打つ
+  if (z.kind !== 'body' && z.kind !== 'orbit') {
+    const grow = Math.min(1, z.t / 0.35), sp = LOW ? 5 : 11;
+    for (let i = 0; i < sp; i++) {
+      const fr = ((z.id * 7 + i * 13) % 10) / 10, a2 = i / sp * TAU + z.id, rr = z.zr * (0.5 + 0.42 * fr), h = z.zr * (0.13 + 0.12 * fr) * grow;
+      if (h < 3) continue;
+      ctx.save(); ctx.translate(Math.cos(a2) * rr, Math.sin(a2) * rr - h * 0.5); ctx.scale(0.5, 1); ctx.globalAlpha = 0.9 * fade;
+      drawGem(ctx, h * 0.5, c, 0, 6, t, z.id + i); ctx.restore();
+    }
   }
   ctx.rotate(t * (z.kind === 'siphon' || z.kind === 'well' ? 1.2 : 0.3));
   ctx.strokeStyle = rgba(c, 0.6); ctx.lineWidth = 1.6;
@@ -2613,6 +2647,8 @@ function drawTrail(s, w0) {
   const g2 = ctx.createLinearGradient(tr[0], tr[1], tr[tr.length - 2], tr[tr.length - 1]);
   g2.addColorStop(0.3, 'rgba(255,250,240,0)'); g2.addColorStop(1, 'rgba(255,250,240,.85)');
   trailRibbon(tr, n, w0 * 0.45, g2);
+  // 軌跡に残る輝き：通り過ぎたあとに星が瞬く
+  for (let i = 1; i <= (LOW ? 2 : 4); i++) { const k = Math.floor(n * i / 5) * 2, tw = Math.max(0, Math.sin(world.t * 17 + i * 2.1 + s.id)); drawStar(ctx, tr[k], tr[k + 1], w0 * (1.4 + tw * 1.6), '#ffffff', 0.25 + tw * 0.65); }
 }
 // ─── 宝石：面取りされた石。面ごとに光の当たり方が違い、角に白い輝きが走る ───
 const gemRGB = h => { const n = parseInt(h.slice(1), 16); return [n >> 16, (n >> 8) & 255, n & 255]; };
@@ -2841,7 +2877,7 @@ function drawFlyer(b) {
   const flick = 0.96 + Math.sin(world.t * 19 + b.id) * 0.04, A = Math.min(1, b.age / 0.04 + 0.3);
   ctx.globalAlpha = A * (solid ? 0.45 : 1);
   drawTrail(b, (b.shape === 'orb' ? r * 1.8 : r * 1.1) * (solid ? 0.6 : 1));
-  ctx.globalAlpha = A * (solid ? 0.12 : 0.16);
+  ctx.globalAlpha = A * (solid ? 0.08 : 0.1);
   ctx.drawImage(glow(b.col), b.x - r * 7, b.y - r * 7, r * 14, r * 14);
   ctx.globalAlpha = A;
   if (solid || WEAPONS.includes(b.shape)) {
@@ -2854,7 +2890,13 @@ function drawFlyer(b) {
     // 面取りの宝石を核にし、まわりを圧縮層が回る。毎フレーム乱数の電弧で輪郭を隠さない。
     ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(ang);
     ctx.globalCompositeOperation = 'source-over';
-    drawGem(ctx, r * 1.02, c, world.t * 1.6 + b.id, 8, world.t, b.id);
+    // 宝石の背後に、六条の光芒が回る
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.save(); ctx.rotate(world.t * 1.3 + b.id); ctx.fillStyle = rgba(c, 0.2 * A);
+    for (let i = 0; i < 6; i++) { ctx.rotate(TAU / 6); ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(r * 4.6, -r * 0.2); ctx.lineTo(r * 4.6, r * 0.2); ctx.closePath(); ctx.fill(); }
+    ctx.restore();
+    ctx.globalCompositeOperation = 'source-over';
+    drawGem(ctx, r * 1.9, c, world.t * 1.6 + b.id, 8, world.t, b.id);
     ctx.globalCompositeOperation = 'lighter';
     const secondary = b.r && D.principles[b.r.b];
     for (let i = 0; i < 3; i++) {
@@ -2863,7 +2905,7 @@ function drawFlyer(b) {
       ctx.globalAlpha = A * (i === 2 ? 0.85 : 0.6); ctx.lineWidth = i === 2 ? 1 : 1.6;
       ctx.beginPath(); ctx.ellipse(0, 0, r * (0.7 + i * 0.18), r * 0.33, 0, 0.2, 5.5); ctx.stroke(); ctx.restore();
     }
-    ctx.globalAlpha = A * 0.45; ctx.drawImage(hotGlow(b.col), -r * 0.9, -r * 0.9, r * 1.8, r * 1.8);
+    ctx.globalAlpha = A * 0.18; ctx.drawImage(hotGlow(b.col), -r * 1.1, -r * 1.1, r * 2.2, r * 2.2);
     ctx.strokeStyle = '#e9e6f3'; ctx.lineWidth = 1; ctx.globalAlpha = A * 0.45;
     ctx.beginPath(); ctx.arc(-r * 0.15, 0, r * 1.5, -0.7, 0.7); ctx.stroke(); ctx.restore();
   } else if (b.shape === 'shard') {
@@ -2871,7 +2913,7 @@ function drawFlyer(b) {
     ctx.drawImage(glow(b.col), b.x - r * 3, b.y - r * 3, r * 6, r * 6);
     ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(ang);
     // 細長く面取りされた原石：回りながら面が光を拾う
-    ctx.save(); ctx.globalCompositeOperation = 'source-over'; ctx.scale(1.9, 0.78); drawGem(ctx, r * 1.05, c, 0, 6, world.t, b.id); ctx.restore();
+    ctx.save(); ctx.globalCompositeOperation = 'source-over'; ctx.scale(2.1, 0.85); drawGem(ctx, r * 1.7, c, 0, 6, world.t, b.id); ctx.restore();
     const gl = Math.sin(world.t * 18 + b.id) * 0.5 + 0.5;
     ctx.globalAlpha = A * gl;
     ctx.drawImage(glow(b.col), -r * 3.2, -r * 0.25, r * 6.4, r * 0.5);
@@ -2884,7 +2926,7 @@ function drawFlyer(b) {
     ctx.strokeStyle = rgba(c, 0.55); ctx.lineWidth = Math.max(1, r * 0.2);
     ctx.beginPath(); ctx.arc(-r * 0.6, 0, r * 1.6, -0.85, 0.85); ctx.stroke();
     // 細い水晶の槍：芯を宝石の面が包む
-    ctx.save(); ctx.globalCompositeOperation = 'source-over'; ctx.translate(-r * 0.6, 0); ctx.scale(2.6, 0.42); drawGem(ctx, r * 1.1, c, 0, 4, world.t, b.id); ctx.restore();
+    ctx.save(); ctx.globalCompositeOperation = 'source-over'; ctx.translate(-r * 0.6, 0); ctx.scale(2.8, 0.5); drawGem(ctx, r * 1.7, c, 0, 4, world.t, b.id); ctx.restore();
     ctx.strokeStyle = 'rgba(255,250,240,.85)'; ctx.lineWidth = r * 0.14; ctx.lineCap = 'round';
     ctx.beginPath(); ctx.moveTo(-r * 2.4, 0); ctx.lineTo(r * 0.9, 0); ctx.stroke();
     ctx.restore();
@@ -3135,14 +3177,19 @@ function drawPart(p) {
     ctx.globalAlpha = a;
     for (let i = 0; i < 6; i++) { const k = (i / 6 + f * 2) % 1, x = p.x + (p.x2 - p.x) * k, y = p.y + (p.y2 - p.y) * k; ctx.drawImage(glow(p.ink), x - p.w * 2, y - p.w * 2, p.w * 4, p.w * 4); }
     // プリズム：光が屈折して、冷たい青と暖かい赤に割れて並走し、結晶の粒が瞬く
-    const split = w0 * (1.1 + f * 1.6);
+    const split = w0 * (1.8 + f * 2.4);
     for (const [sg, col2] of [[-1, 'rgba(110,200,255,'], [1, 'rgba(255,140,170,']]) {
-      ctx.strokeStyle = col2 + (0.38 * a) + ')'; ctx.lineWidth = Math.max(1, w0 * 0.42);
+      ctx.strokeStyle = col2 + (0.7 * a) + ')'; ctx.lineWidth = Math.max(1.5, w0 * 0.8);
       ctx.beginPath(); ctx.moveTo(p.x + nx * split * sg, p.y + ny * split * sg); ctx.lineTo(p.x2 + nx * split * sg * 1.8, p.y2 + ny * split * sg * 1.8); ctx.stroke();
     }
     const spark = LOW ? 4 : 9;
     for (let i = 0; i < spark; i++) { const k = (i * 0.37 + f * 0.9 + p.x * 0.001) % 1, tw = Math.max(0, Math.sin(f * 14 + i * 2.3)); drawStar(ctx, p.x + dx * k + nx * (Math.sin(i * 5) * w0 * 1.6), p.y + dy * k + ny * (Math.sin(i * 5) * w0 * 1.6), w0 * (0.9 + tw * 1.8), '#ffffff', a * tw); }
-    drawStar(ctx, p.x2, p.y2, w0 * 4 * a, '#ffffff', a * 0.9);
+    drawStar(ctx, p.x2, p.y2, w0 * 6 * a, '#ffffff', a * 0.95);
+    // 屈折した宝石が光線に沿って流れていく
+    ctx.save(); ctx.globalCompositeOperation = 'source-over';
+    const gn = LOW ? 3 : Math.min(9, Math.max(3, Math.floor(L / 110)));
+    for (let i = 0; i < gn; i++) { const k = (i / gn + f * 0.5) % 1, side = i % 2 ? 1 : -1; ctx.save(); ctx.translate(p.x + dx * k + nx * side * w0 * 2.6, p.y + dy * k + ny * side * w0 * 2.6); ctx.globalAlpha = a; drawGem(ctx, 4 + w0 * 0.9, c, f * 8 + i, 6, f * 3, i); ctx.restore(); }
+    ctx.restore();
   } else if (p.kind === 'bolt') {
     ctx.globalAlpha = 1 - f; ctx.strokeStyle = c; ctx.lineWidth = p.w;
     ctx.beginPath(); ctx.moveTo(p.x, p.y);
@@ -3159,6 +3206,12 @@ function drawPart(p) {
     const x = p.x + (p.tx - p.x) * e, y = p.y + (p.ty - p.y) * e;
     ctx.globalAlpha = 1 - f * 0.5;
     ctx.drawImage(glow(p.ink), x - 10, y - 10, 20, 20);
+  } else if (p.kind === 'gem') {
+    // 宝石の欠片：面が光を返し、消える直前にもう一度きらりと光る
+    ctx.save(); ctx.translate(p.x, p.y); ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = f < 0.75 ? 1 : (1 - f) / 0.25;
+    drawGem(ctx, p.r, c, p.rot, p.n, p.t * 1.4, p.x);
+    ctx.restore();
   } else if (p.kind === 'shard') {
     // 結晶の欠片：回りながら飛び、光を返す
     ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot);
