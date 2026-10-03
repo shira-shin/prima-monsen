@@ -939,6 +939,7 @@ function unlockAudio() {
     for (let i = 0; i < nl; i++) ch[i] = Math.random() * 2 - 1;
     audio.noise = nb;
     // 亀裂・爆発のざらつきに使う歪み
+    audio.dark = a.createBiquadFilter(); audio.dark.type = 'lowpass'; audio.dark.frequency.value = 780; audio.dark.Q.value = 0.9; audio.dark.connect(audio.bus);
     audio.shaper = a.createWaveShaper();
     const curve = new Float32Array(256); for (let i = 0; i < 256; i++) { const x = i / 128 - 1; curve[i] = Math.tanh(x * 4); }
     audio.shaper.curve = curve; audio.shaper.connect(audio.bus);
@@ -980,6 +981,47 @@ function hiss(type, f0, f1, q, dur, vol, o = {}) {
 function thump(f0, f1, dur, vol, at = 0) { osc('sine', f0, f1, dur, vol, { attack: 0.002, at }); }
 // 電気のはぜる音：短い雑音の粒をばらまく
 function crackle(dur, vol, n = 6) { for (let i = 0; i < n; i++) hiss('highpass', 3000 + Math.random() * 4000, 2500, 1.5, 0.018, vol * (0.4 + Math.random() * 0.6), { at: Math.random() * dur }); }
+// 重低音：沈んでいく低い正弦波に、倍音（歪み）を足して小さなスピーカーでも聞こえるようにする
+function sub(f0, f1, dur, vol, at = 0) {
+  osc('sine', f0, f1, dur, vol, { attack: 0.004, at });
+  osc('sine', f0 * 2, f1 * 2, dur * 0.7, vol * 0.55, { attack: 0.004, at, dest: audio.shaper });
+  osc('triangle', f0 * 3, f1 * 3, dur * 0.4, vol * 0.18, { attack: 0.003, at, dest: audio.shaper });
+}
+// 轟き：低い雑音が重なって、うねりながら遠ざかる
+function rumble(dur, vol, f0 = 360, at = 0) {
+  hiss('lowpass', f0, 45, 0.8, dur, vol, { attack: 0.05, at });
+  for (let i = 1; i <= 3; i++) hiss('lowpass', f0 * 0.7, 50, 0.9, dur * (0.5 + i * 0.15), vol * 0.5, { attack: 0.1 * i, at: at + i * dur * 0.18 });
+}
+// 空を割る直撃音：鋭い破裂、急降下する空気の裂け目、はぜる雷の粒、そして重い轟き
+function skyCrack(v, at = 0) {
+  hiss('highpass', 2500, 9000, 0.7, 0.05, 0.9 * v, { attack: 0.0008, at, dest: audio.shaper });
+  hiss('bandpass', 9000, 600, 5, 0.24, 0.5 * v, { attack: 0.001, at, dest: audio.shaper });
+  hiss('bandpass', 1800, 300, 1.2, 0.5, 0.16 * v, { attack: 0.01, at: at + 0.03 });
+  for (let i = 0; i < 12; i++) hiss('highpass', 3000 + Math.random() * 5000, 2500, 1.5, 0.02, 0.16 * v * (0.4 + Math.random() * 0.6), { at: at + 0.02 + Math.random() * 0.4 });
+  sub(70, 26, 1.3, 0.6 * v, at + 0.01);
+  rumble(2.6, 0.4 * v, 430, at + 0.07);
+}
+// 暗い和音：短調の和音が低く沈む。詠唱の「闇」の気配
+function darkChord(root, v, dur = 1.1, at = 0) {
+  [1, 1.189, 1.498, 2].forEach((m, i) => osc('sawtooth', root * m, root * m * 1.004, dur, 0.022 * v, { attack: 0.14, at, dest: audio.dark }));
+}
+// エネルギーの魔法を放つ：収束する風、立ち上がるうねり、腹に響く低音。金属音は鳴らさない
+function energyCast(r, v) {
+  const root = ROOT[r.a] || 180;
+  hiss('bandpass', 180, 2600, 1.6, 0.3, 0.3 * v, { attack: 0.1 });
+  sub(root * 0.5, root * 0.25, 0.55, 0.42 * v, 0.05);
+  osc('sawtooth', root, root * 3, 0.22, 0.05 * v, { attack: 0.05, dest: audio.shaper });
+  hiss('highpass', 4000, 7000, 1, 0.05, 0.14 * v, { at: 0.02 });
+  darkChord(root * 0.5, v, 0.9);
+}
+// エネルギーが当たる：鋭い打音、腹に響く低音、圧のかたまり、はぜる粒
+function energyHit(r, v, heavy) {
+  hiss('highpass', 3000, 9000, 0.8, 0.03, 0.55 * v, { attack: 0.001, dest: audio.shaper });
+  sub(heavy ? 70 : 90, 28, heavy ? 1.5 : 0.65, (heavy ? 0.62 : 0.4) * v);
+  hiss('lowpass', 2200, 90, 0.7, heavy ? 1.1 : 0.38, 0.32 * v, { attack: 0.003 });
+  crackle(heavy ? 0.5 : 0.25, 0.1 * v, heavy ? 10 : 5);
+  if (heavy) rumble(1.6, 0.26 * v, 300, 0.05);
+}
 // 結晶・ガラスの響き：割り切れない比の部分音が重なり、高いものほど速く消える。宝石を弾いたような音
 const GLASS = [1, 2.76, 5.4, 8.93];
 function chime(f, v, dur = 1.4, o = {}) { v *= 2.4; GLASS.forEach((m, i) => osc('sine', f * m, f * m * 0.998, dur / (1 + i * 0.9), v / (1 + i * 1.4), { attack: 0.0008 + i * 0.0006, at: o.at || 0, dest: o.dest })); }
@@ -1017,7 +1059,7 @@ function textureBuffer(material, stage) {
       tone *= 0.8 + 0.2 * Math.cos(TAU * (orb ? 7 : 13) * t);
     }
     // 結晶のきらめき（非整数の倍音。ループでは整数周波数なので継ぎ目がない）と、立ち上がりの短い打音
-    const glass = (Math.sin(TAU * 2093 * t) * 0.1 + Math.sin(TAU * 3322 * t) * 0.07 + Math.sin(TAU * 5788 * t) * 0.04) * (loop ? 0.45 + 0.25 * Math.sin(TAU * 5 * t) : Math.exp(-t * 6)) * (metal ? 0.6 : 1);
+    const glass = (Math.sin(TAU * 2093 * t) * 0.1 + Math.sin(TAU * 3322 * t) * 0.07 + Math.sin(TAU * 5788 * t) * 0.04) * (loop ? 0.45 + 0.25 * Math.sin(TAU * 5 * t) : Math.exp(-t * 6)) * (metal ? 0.6 : 0);
     const click = !loop && t < 0.0035 ? noise * (1 - t / 0.0035) * 0.9 : 0;
     const rupture = loop ? 0 : air * Math.exp(-t * (stage === 'beam' ? 18 : 65)) * 0.8;
     const rush = loop ? air * edge * (metal ? 0.18 : 0.06) : (stage === 'beam' ? air * 0.32 : low * 0.35);
@@ -1038,10 +1080,13 @@ function playTexture(material, stage, v, rate = 1, delay = 0) {
 function materialSound(r, v, impact = false) {
   const ratio = (ROOT[r.a] || 180) / 180, second = (ROOT[r.b] || ROOT[r.a] || 180) / 180;
   playTexture(materialOf(r), impact ? 'impact' : 'launch', v * 0.75, 0.8 + ratio * 0.15 + second * 0.05);
-  // 原理の根音から取った結晶の響きを重ねる。放つときは三音の上昇、当たるときは砕ける高音と地鳴り
   const root = ROOT[r.a] || 180;
-  if (impact) { thump(78, 28, 0.55, 0.32 * v); for (let i = 0; i < 3; i++) chime(root * (10 + i * 4.5) * (1 + Math.random() * 0.06), 0.03 * v, 1.2, { at: i * 0.025 }); }
-  else [0, 7, 12].forEach((n, i) => chime(root * 4 * Math.pow(2, n / 12), 0.034 * v, 0.9, { at: i * 0.04 }));
+  if (materialOf(r) === 'metal') {
+    // 物体化したもの（固体）：重い金属と石の響き。放つときは低い風切り、当たるときは砕ける高音と地鳴り
+    if (impact) { sub(85, 30, 0.8, 0.45 * v); hiss('highpass', 3500, 1800, 1, 0.06, 0.4 * v, { dest: audio.shaper }); for (let i = 0; i < 3; i++) chime(root * (10 + i * 4.5) * (1 + Math.random() * 0.06), 0.03 * v, 1.2, { at: i * 0.025 }); }
+    else { sub(root * 0.6, root * 0.3, 0.4, 0.32 * v); hiss('bandpass', 400, 1800, 1.4, 0.22, 0.2 * v); }
+  } else if (impact) energyHit(r, v, v > 0.8);
+  else energyCast(r, v);
 }
 function stopFlightVoice(s, voice) {
   const t = audio.ctx.currentTime;
@@ -1146,8 +1191,10 @@ function sfx(name, vol = 1, arg) {
     }
     case 'beam':
       // 先端の破裂を短く、空気の裂ける尾を長く残す。
-      playTexture('arc', 'beam', v * 0.85, 0.9 + (ROOT[arg && arg.a] || 180) / 1800);
-      osc('sine', 500, 3200, 0.45, 0.045 * v, { attack: 0.12 }); chime((ROOT[arg && arg.a] || 180) * 10, 0.04 * v, 1.4, { at: 0.03 });
+      playTexture('arc', 'beam', v * 0.6, 0.9 + (ROOT[arg && arg.a] || 180) / 1800);
+      skyCrack(v * 0.95);
+      osc('sawtooth', 58, 60, 0.6, 0.05 * v, { attack: 0.02, dest: audio.shaper });
+      darkChord((ROOT[arg && arg.a] || 180) * 0.5, v, 1.3);
       break;
     case 'hit': case 'blast': {
       const r = typeof arg === 'object' && arg ? arg : { a: arg || 'motion' };
@@ -1157,7 +1204,7 @@ function sfx(name, vol = 1, arg) {
       if (heavy) playTexture(materialOf(r), 'impact', v * 0.3, 0.62, 0.035);
       break;
     }
-    case 'hurt': thump(140, 50, 0.24, 0.4 * v); hiss('lowpass', 1400, 250, 0.8, 0.18, 0.24 * v); osc('sawtooth', 90, 60, 0.12, 0.05 * v, { dest: audio.shaper }); break;
+    case 'hurt': sub(95, 30, 0.55, 0.5 * v); thump(140, 50, 0.24, 0.4 * v); hiss('lowpass', 1400, 250, 0.8, 0.18, 0.24 * v); osc('sawtooth', 90, 60, 0.12, 0.05 * v, { dest: audio.shaper }); break;
     case 'thud': thump(85, 38, 0.35, 0.2 * v); break;
     case 'ward': [0, 7, 12].forEach((n, i) => osc('sine', 330 * Math.pow(2, n / 12), 330 * Math.pow(2, n / 12), 1.2, 0.05 * v, { at: i * 0.03, attack: 0.03 })); thump(110, 60, 0.3, 0.2 * v); hiss('highpass', 5000, 5000, 1, 0.1, 0.06 * v); break;
     case 'shatter': for (let i = 0; i < 4; i++) chime(2600 + Math.random() * 3200, 0.03 * v, 0.9, { at: i * 0.015 + Math.random() * 0.06 }); for (let i = 0; i < 5; i++) osc('sine', 2200 + i * 700, 1800 + i * 500, 0.3, 0.05 * v, { at: i * 0.012 }); hiss('highpass', 5200, 2800, 2, 0.25, 0.22 * v); thump(100, 45, 0.2, 0.2 * v); break;
@@ -1169,7 +1216,7 @@ function sfx(name, vol = 1, arg) {
     // 固体がエネルギーの膜を剥がす：ざらついた裂け目の音
     case 'strip': hiss('bandpass', 900, 3200, 1.4, 0.2, 0.22 * v, { dest: audio.shaper }); crackle(0.25, 0.06 * v, 6); break;
     // 遠雷：長く低いうなり
-    case 'thunder': hiss('lowpass', 420, 70, 0.7, 2.6, 0.32 * v, { attack: 0.08 }); thump(52, 26, 1.8, 0.3 * v); break;
+    case 'thunder': rumble(3.2, 0.34 * v, 420); sub(50, 24, 2.2, 0.42 * v, 0.1); break;
     case 'reflect': osc('square', 900, 1600, 0.06, 0.06 * v); osc('sine', 2400, 2300, 0.45, 0.05 * v); thump(160, 90, 0.1, 0.15 * v); break;
     case 'buff': [0, 4, 7, 12].forEach((n, i) => osc('sine', 392 * Math.pow(2, n / 12), 392 * Math.pow(2, n / 12), 0.9, 0.05, { at: i * 0.05, attack: 0.03 })); hiss('bandpass', 400, 3000, 1, 0.6, 0.1, { attack: 0.3 }); break;
     case 'misfire': osc('sawtooth', 180, 40, 0.5, 0.2, { dest: audio.shaper }); hiss('lowpass', 1500, 200, 0.8, 0.6, 0.34); thump(90, 30, 0.6, 0.4); crackle(0.5, 0.1, 10); break;
@@ -1178,16 +1225,16 @@ function sfx(name, vol = 1, arg) {
     case 'recall': [12, 7, 0].forEach((n, i) => osc('sine', 660 * Math.pow(2, n / 12), 660 * Math.pow(2, n / 12), 0.35, 0.05, { at: i * 0.06 })); break;
     case 'dodge': hiss('bandpass', 600, 4200, 1, 0.22, 0.24); osc('sine', 300, 900, 0.12, 0.04); break;
     case 'select': osc('sine', 1100 + (arg || 0) * 150, 1100 + (arg || 0) * 150, 0.08, 0.035); osc('sine', 2200 + (arg || 0) * 300, 2200, 0.04, 0.015); break;
-    case 'kill': thump(72, 29, 0.35, 0.2 * v); break;
+    case 'kill': sub(64, 24, 1.1, 0.5 * v); hiss('lowpass', 1800, 80, 0.8, 0.8, 0.22 * v, { attack: 0.004 }); break;
     case 'pickup': { const n = PENTA[Math.min(PENTA.length - 1, Math.floor(arg / 2.4))], f = 1320 * Math.pow(2, n / 12); chime(f, 0.03 * v, 0.55); break; }
     case 'level': [0, 4, 7, 11, 14].forEach((n, i) => osc('sine', 523 * Math.pow(2, n / 12), 523 * Math.pow(2, n / 12), 1.3, 0.05, { at: i * 0.07, attack: 0.02 })); hiss('bandpass', 1000, 8000, 1, 1, 0.08, { attack: 0.4 }); break;
     case 'surge': hiss('bandpass', 300, 1400, 0.8, 0.8, 0.14 * v, { attack: 0.3 }); thump(70, 35, 0.8, 0.25 * v, 0.3); break;
     case 'down': hiss('lowpass', 700, 100, 0.6, 0.8, 0.12); thump(65, 25, 0.5, 0.22); break;
     // 落雷：予告の和音が上がり、白い雷が落ち、遠くへ轟く
     case 'strikeWarn': [0, 7, 12].forEach((n, i) => osc('sine', 880 * Math.pow(2, n / 12), 892 * Math.pow(2, n / 12), 0.5, 0.05 * v, { at: i * 0.18, attack: 0.02 })); hiss('highpass', 6000, 6000, 1, 0.5, 0.05 * v, { attack: 0.4 }); break;
-    case 'strike': hiss('highpass', 1200, 400, 0.8, 0.25, 0.55 * v, { dest: audio.shaper }); thump(60, 24, 1.4, 0.7 * v); hiss('lowpass', 2400, 80, 0.7, 1.8, 0.4 * v, { attack: 0.003 }); crackle(0.5, 0.12 * v, 10); chime(3136, 0.05 * v, 1.6, { at: 0.05 }); break;
+    case 'strike': skyCrack(1.25 * v); break;
     // 演算の間：低い唸りの上を、機械の音が降りていく
-    case 'bossCall': osc('sawtooth', 55, 40, 2.6, 0.12, { attack: 0.6, dest: audio.shaper }); thump(48, 24, 1.6, 0.5); [0, 3, 6, 10, 13].forEach((n, i) => osc('square', 1320 * Math.pow(2, -n / 12), 1300 * Math.pow(2, -n / 12), 0.09, 0.04, { at: 0.3 + i * 0.07 })); hiss('bandpass', 300, 5000, 2, 1.8, 0.1, { attack: 1 }); break;
+    case 'bossCall': osc('sawtooth', 55, 40, 2.6, 0.12, { attack: 0.6, dest: audio.shaper }); sub(48, 22, 2.4, 0.6); darkChord(55, 1.4, 2.4); [0, 3, 6, 10, 13].forEach((n, i) => osc('square', 1320 * Math.pow(2, -n / 12), 1300 * Math.pow(2, -n / 12), 0.09, 0.04, { at: 0.3 + i * 0.07 })); hiss('bandpass', 300, 5000, 2, 1.8, 0.1, { attack: 1 }); break;
     case 'bossLearn': [0, 4, 7, 12, 16, 19].forEach((n, i) => osc('square', 660 * Math.pow(2, n / 12), 660 * Math.pow(2, n / 12), 0.06, 0.03, { at: i * 0.045 })); chime(1980, 0.04, 1, { at: 0.3 }); break;
     case 'bossDecoy': for (let i = 0; i < 5; i++) hiss('bandpass', 1500 + i * 900, 1500 + i * 900, 4, 0.04, 0.1, { at: i * 0.04 }); osc('sawtooth', 220, 110, 0.3, 0.06, { dest: audio.shaper }); break;
     case 'join': [0, 7, 12].forEach((n, i) => osc('sine', 392 * Math.pow(2, n / 12), 392 * Math.pow(2, n / 12), 0.9, 0.05, { at: i * 0.08, attack: 0.02 })); hiss('bandpass', 300, 2400, 1, 0.9, 0.12, { attack: 0.6 }); thump(90, 40, 0.6, 0.3, 0.6); break;
