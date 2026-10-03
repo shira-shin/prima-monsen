@@ -608,8 +608,8 @@ function consumeEvents() {
         shockFx(tip.x, tip.y, beam ? 40 : 24, e.col, 0.2);
         spray(tip.x, tip.y, e.col, beam ? 6 : 4, 340, e.aim, 0.25, 2);
         if (beam) embers(tip.x, tip.y, e.col, 4, 200, e.aim, 0.6);
-        if (!beam) sfxAt('cast', e.id === meId ? 1 : 0.3 * vol(u.x, u.y), e, u.x);
-        else sfxAt('beam', e.id === meId ? 1 : 0.35 * vol(u.x, u.y), e, u.x);
+        if (!beam && e.form !== 'plane') sfxAt('cast', e.id === meId ? 1 : 0.3 * vol(u.x, u.y), e, u.x);
+        else if (beam) sfxAt('beam', e.id === meId ? 1 : 0.35 * vol(u.x, u.y), e, u.x);
         if (e.id === meId) punch = Math.max(punch, beam ? 0.035 : 0.012);
         break;
       }
@@ -706,6 +706,7 @@ function consumeEvents() {
       case 'zone':
         if (near(e.x, e.y)) circleFx(e.x, e.y, e.r, e.col, 0.55);
         if (e.kind === 'blades' && near(e.x, e.y)) { principleFx('bind', e.x, e.y, e.r, e.col, null, 0.7); if (e.owner === meId) sfx('clang', 0.8); }
+        if (e.kind === 'wall' && near(e.x, e.y)) sfxAt('ward', e.owner === meId ? 1 : 0.3 * vol(e.x, e.y), null, e.x);
         if (e.owner === meId && ['bulwark', 'shift', 'counter'].includes(e.rtype)) sfx('ward', 1);
         break;
       case 'wardBreak':
@@ -1019,10 +1020,10 @@ function rumble(dur, vol, f0 = 360, at = 0) {
 }
 // 空を割る直撃音：鋭い破裂、急降下する空気の裂け目、はぜる雷の粒、そして重い轟き
 function skyCrack(v, at = 0) {
-  hiss('highpass', 2500, 9000, 0.7, 0.05, 0.9 * v, { attack: 0.0008, at, dest: audio.shaper });
-  hiss('bandpass', 9000, 600, 5, 0.24, 0.5 * v, { attack: 0.001, at, dest: audio.shaper });
+  hiss('lowpass', 1800, 900, 0.65, 0.035, 0.2 * v, { attack: 0.0008, at, dest: audio.shaper });
+  hiss('lowpass', 1300, 300, 0.7, 0.18, 0.16 * v, { attack: 0.001, at, dest: audio.shaper });
   hiss('bandpass', 1800, 300, 1.2, 0.5, 0.16 * v, { attack: 0.01, at: at + 0.03 });
-  for (let i = 0; i < 12; i++) hiss('highpass', 3000 + Math.random() * 5000, 2500, 1.5, 0.02, 0.16 * v * (0.4 + Math.random() * 0.6), { at: at + 0.02 + Math.random() * 0.4 });
+  for (let i = 0; i < 4; i++) hiss('lowpass', 700 + Math.random() * 500, 300, 0.7, 0.025, 0.04 * v * (0.4 + Math.random() * 0.6), { at: at + 0.02 + Math.random() * 0.4 });
   sub(70, 26, 1.3, 0.6 * v, at + 0.01);
   rumble(2.6, 0.4 * v, 430, at + 0.07);
 }
@@ -1036,7 +1037,7 @@ function defeatSound(v) {
   osc('sine', vary(332, 0.08), 82, 1.6, 0.07 * v, { attack: 0.05, detune: -8 });
   darkChord(55, v, 2.2, 0.05);
   rumble(2.2, 0.2 * v, 260, 0.1);
-  for (let i = 0; i < 8; i++) hiss('bandpass', 2800 - i * 160, 1400, 3, 0.07, 0.04 * v, { at: 0.35 + i * 0.15 });
+  for (let i = 0; i < 3; i++) hiss('lowpass', 850 - i * 160, 250, 0.7, 0.07, 0.025 * v, { at: 0.35 + i * 0.15 });
 }
 // 暗い和音：短調の和音が低く沈む
 function darkChord(root, v, dur = 1.1, at = 0) {
@@ -1094,117 +1095,113 @@ function playBaked(buf, v, rate = 1, at = 0, dest) {
   s.start(a.currentTime + at);
 }
 const pick3 = () => Math.floor(Math.random() * 3);
-// 原理ごとの声色：根音・風の量と向き・余韻の響き・光線の根音と明るさ・うねりの速さ・ずれ
-//   動は風を裂いて抜ける / 結は低く重く唸る / 分は鋭く短い / 換は吸い込む（帯域が上がる）/ 増は丸く膨らむ / 相はずれてうねる
-const TIMBRE = {
-  motion:  { root: 220, sweep: 2.4, air: 1,    a0: 5200, a1: 1300, ring: [2, 3],   rv: 0.16, sub: 0.7, len: 0.42, beam: 110, bright: 1.15, trem: 23, det: 0.004 },
-  bind:    { root: 147, sweep: 1.7, air: 0.4,  a0: 2400, a1: 650,  ring: [1, 1.5], rv: 0.3,  sub: 1,   len: 0.6,  beam: 73,  bright: 0.7,  trem: 8,  det: 0.003 },
-  divide:  { root: 196, sweep: 3,   air: 0.7,  a0: 8200, a1: 2600, ring: [2, 4],   rv: 0.13, sub: 0.6, len: 0.3,  beam: 123, bright: 1.45, trem: 36, det: 0.005 },
-  convert: { root: 131, sweep: 0.55, air: 0.65, a0: 800, a1: 3600, ring: [1.5, 3], rv: 0.24, sub: 0.8, len: 0.52, beam: 98,  bright: 0.95, trem: 13, det: 0.004, rise: true },
-  grow:    { root: 165, sweep: 1.5, air: 0.5,  a0: 1700, a1: 560,  ring: [1, 2],   rv: 0.26, sub: 0.9, len: 0.62, beam: 87,  bright: 0.75, trem: 6,  det: 0.003 },
-  phase:   { root: 185, sweep: 2,   air: 0.55, a0: 4200, a1: 1700, ring: [2, 3],   rv: 0.22, sub: 0.6, len: 0.5,  beam: 104, bright: 1.05, trem: 17, det: 0.014 }
-};
-const timbre = a => TIMBRE[a] || TIMBRE.motion;
 // 音の部品（焼き込み用）：毎サンプル呼ぶと次の値を返す。exp や pow を毎回計算しないので速い
 //   ev：a 秒で立ち上がり、時定数 d 秒で消える包絡
 //   glide：from から to へ、時定数 d 秒で寄っていく値（音程やフィルタの動き）
 //   ph：周波数 f の正弦の位相を進める
 function ev(sr, a, d) { const na = Math.max(1, Math.round(a * sr)), k = Math.exp(-1 / (d * sr)); let i = 0, e = 1; return () => i < na ? ++i / na : (e *= k); }
 function glide(sr, from, to, d) { const k = Math.exp(-1 / (d * sr)); let e = 1; return () => to + (from - to) * (e *= k); }
-// エネルギーを放つ：ごく短い弾け → 音程の落ちる圧（ドゥン）と胸に響く低音 → 空気を押し分けて抜ける風 → 原理の余韻。金属音は鳴らさない
-function castBuffer(a, k) {
-  const P = timbre(a);
-  return bake(`cast:${a}:${k}`, P.len + 0.25, (out, sr, n) => {
-    const nz = noiseOf(11 + k * 97 + a.length * 13), f1 = svf(), f2 = svf(), fo = svf();
-    const root = P.root * (1 + (k - 1) * 0.03), w0 = TAU / sr;
-    const eC = ev(sr, 0.0001, 0.004), eB = ev(sr, 0.002, 0.085), eS = ev(sr, 0.003, 0.11), eA = ev(sr, 0.008, P.len * 0.32), eR = ev(sr, 0.012, P.len * 0.45);
-    const fb = glide(sr, root * 0.5 * P.sweep, root * 0.5, 0.03), fs = glide(sr, 100, 48, 0.04), fa = glide(sr, P.a0, P.a1, P.len * 0.4);
-    let pb = 0, ps = 0, p1 = 0, p2 = 0, p3 = 0;
-    const r1 = w0 * root * P.ring[0], r2 = w0 * root * P.ring[1], r3 = w0 * root * P.ring[0] * (1 + P.det);
+// 圧の声色：ノイズで違いを作らず、立ち上がり・音程の曲がり・倍音・脈動で六原理を分ける
+const PRESSURE = {
+  motion:  { root: 155, bend: 2.8, attack: 0.003, decay: 0.065, overtone: 0.22, fm: 0.18, pulse: 0,    tail: 0.09 },
+  bind:    { root: 92,  bend: 1.35,attack: 0.009, decay: 0.15,  overtone: 0.12, fm: 0.06, pulse: 0,    tail: 0.2 },
+  divide:  { root: 235, bend: 2.1, attack: 0.002, decay: 0.04,  overtone: 0.28, fm: 0.32, pulse: 0,    tail: 0.055 },
+  convert: { root: 118, bend: 0.5, attack: 0.022, decay: 0.11,  overtone: 0.18, fm: 0.24, pulse: 0,    tail: 0.13 },
+  grow:    { root: 138, bend: 1.2, attack: 0.028, decay: 0.13,  overtone: 0.14, fm: 0.08, pulse: 0.07, tail: 0.18 },
+  phase:   { root: 178, bend: 1.6, attack: 0.01,  decay: 0.09,  overtone: 0.16, fm: 0.45, pulse: 0.04, tail: 0.14 }
+};
+// 短い一撃・重い一撃・二段の脈動。直前と同じ素材を連続で選ばない
+const soundLast = new Map();
+function pickSound(key) {
+  const last = soundLast.get(key), choices = [0, 1, 2].filter(k => k !== last);
+  const k = choices[Math.floor(Math.random() * choices.length)]; soundLast.set(key, k); return k;
+}
+// エネルギーの共通素材：低中域の圧、短い芯、減衰する倍音。風の持続ノイズは重ねない
+function pressureBuffer(stage, a, k) {
+  const P = PRESSURE[a] || PRESSURE.motion, beam = stage === 'beam', hit = stage === 'hit' || stage === 'blast', heavy = stage === 'blast';
+  const weight = [0.78, 1.12, 0.94][k], dur = (beam ? 0.82 : heavy ? 1.05 : 0.48) + P.tail * weight;
+  return bake(`${stage}:${a}:${k}`, dur, (out, sr, n) => {
+    const w0 = TAU / sr, fo = svf(), mass = svf(), nz = noiseOf(71 + k * 37 + a.length);
+    const root = P.root * (beam ? 0.72 : hit ? 0.8 : 1) * [1.08, 0.86, 1][k];
+    const decay = (beam ? 0.2 : heavy ? 0.2 : P.decay) * weight;
+    const eB = ev(sr, P.attack, decay), eS = ev(sr, 0.006, heavy ? 0.32 : beam ? 0.22 : 0.11);
+    const eT = ev(sr, 0.007, P.tail * weight), eC = ev(sr, 0.002, hit ? 0.009 : 0.012), eN = ev(sr, 0.005, heavy ? 0.2 : 0.025);
+    const fp = glide(sr, root * P.bend * [1.15, 0.85, 1][k], root, hit ? 0.012 : beam ? 0.055 : 0.025);
+    const fs = glide(sr, heavy ? 105 : 115, heavy ? 42 : 52, 0.035), fm = glide(sr, P.fm, 0, 0.07);
+    const delay = Math.round((P.pulse || (k === 2 ? 0.045 : 0)) * sr), eP = ev(sr, 0.008, decay * 0.7);
+    let ph = 0, ps = 0, pt = 0;
     for (let i = 0; i < n; i++) {
-      const w = nz();
-      const click = f1(w, 3800, 0.8, sr, 2) * eC();
-      pb += w0 * fb();
-      const body = (Math.sin(pb) + 0.22 * Math.sin(pb * 2)) * eB();
-      ps += w0 * fs();
-      const low = Math.sin(ps) * eS() * P.sub;
-      const air = f2(w, fa(), 1.1, sr, 1) * eA() * P.air;
-      // 余韻：整数比の部分音（金属にならない）。相はわずかにずれてうねる
-      p1 += r1; p2 += r2; p3 += r3;
-      const ring = (Math.sin(p1) + 0.5 * Math.sin(p2) + 0.6 * Math.sin(p3)) * eR() * P.rv;
-      out[i] = Math.tanh(fo(click * 0.8 + body * 0.62 + low * 0.8 + air + ring, 7500, 0.7, sr) * 1.3);
+      ph += w0 * fp(); ps += w0 * fs(); pt += w0 * root * 2;
+      const core = Math.sin(ph + fm() * Math.sin(ph * 2)) + P.overtone * Math.sin(ph * 2);
+      const pulse = delay && i >= delay ? Math.sin(ph * 1.5) * eP() * (k === 2 ? 0.4 : 0.22) : 0;
+      const bloom = Math.sin(pt) * eT() * (beam ? 0.18 : 0.1);
+      const snap = Math.sin(w0 * (hit ? 720 : 560) * i) * eC() * (a === 'divide' ? 0.32 : 0.16);
+      const texture = mass(nz(), heavy ? 180 : 420, 0.65, sr) * eN() * (heavy ? 0.5 : 0.08);
+      out[i] = Math.tanh(fo(core * eB() * 0.8 + (Math.sin(ps) + 0.16 * Math.sin(ps * 2)) * eS() * 0.7 + pulse + bloom + snap + texture, 2800, 0.65, sr) * 0.9);
     }
   });
 }
-// 固体を放つ：重い物が空気を切る風切り、手応えの「ドッ」、刃の短い鳴り
+function castBuffer(a, k) { return pressureBuffer('cast', a, k); }
+// 固体を放つ：重い射出の圧と刃の金属共振。高い部分音ほど早く消す
 function solidCastBuffer(k) {
   return bake(`scast:${k}`, 0.5, (out, sr, n) => {
     const nz = noiseOf(77 + k * 31), f1 = svf(), f2 = svf(), fo = svf(), w0 = TAU / sr;
-    const eT = ev(sr, 0.002, 0.06), eS = ev(sr, 0.004, 0.07), eK = ev(sr, 0.0001, 0.003), fp = glide(sr, 160, 70, 0.02);
-    const q2 = w0 * 2380 * (1 + k * 0.02), q3 = w0 * 3710 * (1 + k * 0.015), sw = Math.PI / (0.34 * sr);
+    const eT = ev(sr, 0.002, 0.06), eS = ev(sr, 0.002, [0.09, 0.13, 0.075][k]), eK = ev(sr, 0.0001, 0.003), fp = glide(sr, 160, 70, 0.02);
+    const q2 = w0 * [740, 960, 1120][k], q3 = q2 * 2.76, sw = Math.PI / (0.34 * sr);
     let p1 = 0, p2 = 0, p3 = 0;
     for (let i = 0; i < n; i++) {
       const w = nz(), arc = i * sw < Math.PI ? Math.sin(i * sw) : 0;
-      const swish = f1(w, 500 + 2600 * arc, 1.4, sr, 1) * arc * Math.sqrt(arc) * 1.4;
+      const swish = f1(w, 450 + 850 * arc, 0.7, sr, 1) * arc * Math.sqrt(arc) * 0.22;
       p1 += w0 * fp();
       p2 += q2; p3 += q3;
-      const shing = (Math.sin(p2) + 0.6 * Math.sin(p3)) * eS() * 0.2;
-      out[i] = Math.tanh(fo(swish + Math.sin(p1) * eT() * 0.7 + shing + f2(w, 5000, 0.8, sr, 2) * eK() * 0.6, 9000, 0.7, sr) * 1.2);
+      const shing = (Math.sin(p2) + 0.22 * Math.sin(p3)) * eS() * 0.3;
+      out[i] = Math.tanh(fo(swish + Math.sin(p1) * eT() * 0.7 + shing + f2(w, 1600, 0.65, sr, 1) * eK() * 0.1, 3200, 0.7, sr) * 1.2);
     }
   });
 }
-// 光線：放った瞬間の破裂と沈む重低音 → わずかにずれた鋸波の束が閉じていくフィルタを通る灼けるうなり
-//   → 空気が焼けて流れ込む咆哮 → 数ミリ秒ごとに強さの変わる電気のざらつき。立ち上がりは一気に、尾は長く引く
+// 壁：低い二つの圧が合わさって定着する。三種類で広がる時間と重さが違う
+function wardBuffer(k) {
+  return bake(`ward:${k}`, [0.65, 0.85, 0.72][k], (out, sr, n) => {
+    const fo = svf(), w0 = TAU / sr, eB = ev(sr, [0.012, 0.025, 0.018][k], [0.1, 0.18, 0.13][k]);
+    const eR = ev(sr, 0.018, 0.12), fp = glide(sr, [180, 130, 210][k], [78, 62, 92][k], 0.045);
+    const delay = Math.round([0.055, 0.085, 0.035][k] * sr);
+    const eLow = ev(sr, 0.008, 0.17);
+    let ph = 0, ps = 0, pl = 0;
+    for (let i = 0; i < n; i++) {
+      ph += w0 * fp(); ps += w0 * 116; pl += w0 * 52;
+      const settle = i >= delay ? Math.sin(ps) * eR() * 0.4 : 0;
+      out[i] = Math.tanh(fo((Math.sin(ph) + 0.12 * Math.sin(ph * 2)) * eB() + settle + Math.sin(pl) * eLow() * 0.38, 1800, 0.65, sr));
+    }
+  });
+}
+// 光線：立ち上がりの圧裂、太い低音、伸びる倍音の芯。持続するノイズを使わず力の流れを作る
 function beamBuffer(a, k) {
-  const P = timbre(a);
-  return bake(`beam:${a}:${k}`, 1.3, (out, sr, n) => {
-    const nz = noiseOf(301 + k * 53 + a.length * 7), gr = noiseOf(907 + k), fl = svf(), fr = svf(), fs = svf(), ft = svf(), fo = svf(), w0 = TAU / sr;
-    const root = P.beam * (1 + (k - 1) * 0.025), mult = [1, 1 + P.det, 2 + P.det * 0.5, 0.5], amp = [0.6, 0.6, 0.35, 0.8], ph = [0, 0.3, 0.6, 0.1];
-    const eBurst = ev(sr, 0.0001, 0.025), eLow = ev(sr, 0.004, 0.42), fsub = glide(sr, 78, 34, 0.18), gl = glide(sr, 1.3, 1, 0.06);
-    const cut = P.rise ? glide(sr, 700 * P.bright, 3700 * P.bright, 0.25) : glide(sr, 4300 * P.bright, 700 * P.bright, 0.22), roarF = glide(sr, 1760 * P.bright, 1100 * P.bright, 0.15);
-    const n1 = Math.round(0.012 * sr), n2 = Math.round(0.34 * sr), kd = Math.exp(-1 / (0.3 * sr)), vib = TAU * 5.3 / sr, trw = TAU * P.trem / sr;
-    let psub = 0, hold = 0, grain = 1, e = 0;
+  const P = PRESSURE[a] || PRESSURE.divide;
+  return bake(`beam:${a}:${k}`, [1.05, 1.2, 1.12][k] + P.tail, (out, sr, n) => {
+    const w0 = TAU / sr, fo = svf(), root = P.root * 0.85 * [1.08, 0.9, 1][k];
+    const eBurst = ev(sr, 0.002, 0.038), eLow = ev(sr, 0.005, [0.22, 0.29, 0.25][k]);
+    const fp = glide(sr, root * 1.9, root, 0.055), fs = glide(sr, 115, 43, 0.045), fb = glide(sr, 740, 170, 0.018);
+    const cut = glide(sr, 3200, 1500, 0.17), index = glide(sr, 0.65 + P.fm, 0.18, 0.18);
+    const attack = Math.round(0.01 * sr), hold = Math.round([0.19, 0.27, 0.23][k] * sr), kd = Math.exp(-1 / (0.17 * sr));
+    let ph = 0, ps = 0, pb = 0, env = 0;
     for (let i = 0; i < n; i++) {
-      const w = nz();
-      e = i < n1 ? i / n1 : i < n2 ? 1 - (i - n1) / sr * 0.25 : e * kd;
-      psub += w0 * fsub();
-      const g = gl() * (1 + 0.004 * Math.sin(vib * i));
-      let saw = 0;
-      for (let j = 0; j < 4; j++) { ph[j] += root * mult[j] * g / sr; ph[j] -= Math.floor(ph[j]); saw += (2 * ph[j] - 1) * amp[j]; }
-      const body = fl(saw, cut(), 0.9, sr);
-      const roar = fr(w, roarF(), 0.75, sr, 1) * 1.3;
-      if (--hold <= 0) { hold = Math.floor(sr * (0.003 + 0.003 * (gr() + 1))); grain = 0.3 + 0.35 * (gr() + 1); }
-      const sizzle = fs(w, 5200, 0.7, sr, 2) * grain * 0.16;
-      const trem = 1 - 0.18 * (0.5 + 0.5 * Math.sin(trw * i));
-      out[i] = Math.tanh(fo((body * 0.85 * trem + roar * 0.34 + sizzle) * e + ft(w, 7000, 0.7, sr) * eBurst() * 0.8 + Math.sin(psub) * eLow() * 0.75, 8500, 0.7, sr) * 1.25);
+      ph += w0 * fp(); ps += w0 * fs(); pb += w0 * fb();
+      env = i < attack ? i / attack : i < hold ? 1 : env * kd;
+      const drive = Math.sin(ph + index() * Math.sin(ph * 2)) + 0.3 * Math.sin(ph * 2) + 0.14 * Math.sin(ph * 3);
+      const flow = 0.92 + 0.08 * Math.sin(w0 * (a === 'phase' ? 11 : 5) * i);
+      const burst = (Math.sin(pb) + 0.25 * Math.sin(pb * 2)) * eBurst() * 0.65;
+      const low = (Math.sin(ps) + 0.18 * Math.sin(ps * 2)) * eLow() * 0.95;
+      out[i] = Math.tanh(fo(drive * env * flow * 0.66 + low + burst, cut(), 0.65, sr) * 0.95);
     }
   });
 }
-// エネルギーが当たる：鋭い弾け、音程の落ちる打撃、腹に響く低音、圧のかたまり、はぜる粒、原理の色。重いものは長い轟きが残る
-function hitBuffer(a, heavy, k) {
-  const P = timbre(a);
-  return bake(`hit:${a}:${heavy ? 1 : 0}:${k}`, heavy ? 1.5 : 0.55, (out, sr, n) => {
-    const nz = noiseOf(503 + k * 17 + (heavy ? 5 : 0) + a.length * 3), tr = noiseOf(61 + k), f1 = svf(), f2 = svf(), f3 = svf(), f4 = svf(), fo = svf(), w0 = TAU / sr;
-    const th = heavy ? 0.992 : 0.995, pt = w0 * P.root * 2;
-    const eC = ev(sr, 0.0001, 0.005), eB = ev(sr, 0.0015, heavy ? 0.16 : 0.07), eL = ev(sr, 0.003, heavy ? 0.55 : 0.13), eU = ev(sr, 0.002, heavy ? 0.22 : 0.08);
-    const eK = ev(sr, 0.01, heavy ? 0.4 : 0.14), eT = ev(sr, 0.004, 0.09), eR = ev(sr, 0.03, 0.7);
-    const fb = glide(sr, 364, 140, 0.014), fl = glide(sr, 86, 36, heavy ? 0.09 : 0.04), fu = glide(sr, 4000, 200, heavy ? 0.09 : 0.04);
-    let pb = 0, ps = 0, pp = 0;
-    for (let i = 0; i < n; i++) {
-      const w = nz();
-      pb += w0 * fb(); ps += w0 * fl(); pp += pt;
-      const g = tr() > th ? (tr() > 0 ? 6 : -6) : 0;
-      const x = f1(w, 2500, 0.7, sr, 2) * eC() * 0.8 + Math.sin(pb) * eB() * 0.7 + Math.sin(ps) * eL() * 0.8 + f2(w, fu(), 0.7, sr) * eU() * 0.9
-        + f3(g, 3200, 2.5, sr, 1) * eK() * 0.28 + Math.sin(pp) * eT() * P.rv + (heavy ? f4(w, 240, 0.7, sr) * eR() * 2.2 : 0);
-      out[i] = Math.tanh(fo(x, 9500, 0.7, sr) * 1.3);
-    }
-  });
-}
+// 命中は短い芯、炸裂は低い余韻
+function hitBuffer(a, heavy, k) { return pressureBuffer(heavy ? 'blast' : 'hit', a, k); }
 // 固体が当たる：鈍い打撃、金属と石の短い鳴り（不協和の部分音）、飛び散る破片の粒
 function solidHitBuffer(heavy, k) {
   return bake(`shit:${heavy ? 1 : 0}:${k}`, heavy ? 1.1 : 0.6, (out, sr, n) => {
     const nz = noiseOf(211 + k * 29 + (heavy ? 3 : 0)), tr = noiseOf(5 + k), f1 = svf(), f2 = svf(), f3 = svf(), fo = svf(), w0 = TAU / sr;
-    const base = 820 * (1 + (k - 1) * 0.04), q = [1, 2.76, 5.4].map(m => w0 * base * m), ph = [0, 0, 0];
+    const base = [390, 470, 580][k], q = [1, 2.76, 5.4].map(m => w0 * base * m), ph = [0, 0, 0];
     const eC = ev(sr, 0.0001, 0.004), eT = ev(sr, 0.002, heavy ? 0.14 : 0.07), eD = ev(sr, 0.02, heavy ? 0.35 : 0.16), eR = ev(sr, 0.02, 0.5), fp = glide(sr, 116, 55, 0.02);
     const eM = [0, 1, 2].map(j => ev(sr, 0.001, (heavy ? 0.3 : 0.16) / (1 + j)));
     let pb = 0;
@@ -1212,10 +1209,10 @@ function solidHitBuffer(heavy, k) {
       const w = nz();
       pb += w0 * fp();
       let clank = 0;
-      for (let j = 0; j < 3; j++) { ph[j] += q[j]; clank += Math.sin(ph[j]) * eM[j]() / (1 + j); }
+      for (let j = 0; j < 3; j++) { ph[j] += q[j]; clank += Math.sin(ph[j]) * eM[j]() / (1 + j * 2.5); }
       const g = tr() > 0.993 ? (tr() > 0 ? 5 : -5) : 0;
-      const x = f1(w, 3000, 0.7, sr, 2) * eC() * 0.7 + Math.sin(pb) * eT() * 0.9 + clank * 0.32 + f2(g, 2100, 1.8, sr, 1) * eD() * 0.5 + (heavy ? f3(w, 260, 0.7, sr) * eR() * 2 : 0);
-      out[i] = Math.tanh(fo(x, 9000, 0.7, sr) * 1.25);
+      const x = f1(w, 1400, 0.65, sr, 1) * eC() * 0.15 + Math.sin(pb) * eT() * 0.9 + clank * 0.4 + f2(g, 850, 0.7, sr, 1) * eD() * 0.12 + (heavy ? f3(w, 260, 0.7, sr) * eR() * 2 : 0);
+      out[i] = Math.tanh(fo(x, 3000, 0.65, sr) * 1.05);
     }
   });
 }
@@ -1237,7 +1234,7 @@ function glintBuffer() {
     const nz = noiseOf(9), f = svf(), w0 = TAU / sr, e1 = ev(sr, 0.002, 0.1), e2 = ev(sr, 0.0015, 0.04), e3 = ev(sr, 0.001, 0.018);
     for (let i = 0; i < n; i++) {
       const b = e2();
-      out[i] = Math.sin(w0 * 880 * i) * e1() + Math.sin(w0 * 1761 * i) * 0.28 * b + Math.sin(w0 * 2640 * i) * 0.08 * b + f(nz(), 7000, 0.8, sr, 1) * e3() * 0.3;
+      out[i] = Math.sin(w0 * 880 * i) * e1() + Math.sin(w0 * 1761 * i) * 0.28 * b + Math.sin(w0 * 2640 * i) * 0.08 * b + f(nz(), 1800, 0.65, sr, 1) * e3() * 0.02;
     }
   });
 }
@@ -1252,10 +1249,10 @@ function flightBuffer(material) {
     const t = i / sr, w = nz();
     if (metal) {
       const spin = 0.5 + 0.5 * Math.sin(TAU * 7 * t);
-      tmp[i] = f1(w, 900 + 1400 * spin, 1.3, sr, 1) * (0.35 + 0.65 * spin * spin) * 1.6 + Math.sin(TAU * 96 * t) * 0.12;
+      tmp[i] = f1(w, 400 + 500 * spin, 0.7, sr, 1) * (0.35 + 0.65 * spin * spin) * 0.2 + Math.sin(TAU * 96 * t) * 0.12;
     } else {
       const f0 = orb ? 82 : 123, wob = 1 + 0.25 * Math.sin(TAU * (orb ? 3 : 5) * t);
-      tmp[i] = (Math.sin(TAU * f0 * t) * 0.5 + Math.sin(TAU * f0 * 2 * t) * 0.22 + Math.sin(TAU * f0 * 3 * t) * 0.08) * wob + f2(w, orb ? 700 : 1500, 0.9, sr, 1) * 0.5;
+      tmp[i] = (Math.sin(TAU * f0 * t) * 0.5 + Math.sin(TAU * f0 * 2 * t) * 0.22 + Math.sin(TAU * f0 * 3 * t) * 0.08) * wob + f2(w, orb ? 350 : 600, 0.65, sr, 1) * 0.035;
     }
   }
   const buf = a.createBuffer(1, n, sr), out = buf.getChannelData(0);
@@ -1268,6 +1265,7 @@ function flightBuffer(material) {
 // 素材の取り出し（確認画面とテストから使う）：flight はループ、それ以外は同じ材質の焼き込み素材
 function textureBuffer(material, stage) {
   if (stage === 'flight') return flightBuffer(material);
+  if (stage === 'ward') return wardBuffer(1);
   const metal = material === 'metal';
   if (stage === 'beam') return beamBuffer(material === 'orb' ? 'bind' : 'divide', 1);
   if (stage === 'impact') return metal ? solidHitBuffer(false, 1) : hitBuffer(material === 'orb' ? 'bind' : 'motion', false, 1);
@@ -1278,16 +1276,17 @@ function playTexture(material, stage, v, rate = 1, delay = 0) { playBaked(textur
 // 術の音：質（固体／エネルギー）と1段目の主な原理で素材を選ぶ。副原理は余韻の高さを少し動かす
 function materialSound(r, v, impact = false, heavy = v > 0.8) {
   const solid = materialOf(r) === 'metal', a = r.a || 'motion', tilt = r.b && ROOT[r.b] ? 0.97 + (ROOT[r.b] / (ROOT[a] || 180)) * 0.03 : 1;
-  if (impact) playBaked(solid ? solidHitBuffer(heavy, pick3()) : hitBuffer(a, heavy, pick3()), v * (heavy ? 0.85 : 0.6), vary(tilt, 0.04));
-  else playBaked(solid ? solidCastBuffer(pick3()) : castBuffer(a, pick3()), v * 0.62, vary(tilt, 0.035));
+  if (impact) playBaked(solid ? solidHitBuffer(heavy, pickSound('solidHit')) : hitBuffer(a, heavy, pickSound('hit:' + a)), v * (heavy ? 0.85 : 0.6), vary(tilt, 0.04));
+  else playBaked(solid ? solidCastBuffer(pickSound('solidCast')) : castBuffer(a, pickSound('cast:' + a)), v * 0.62, vary(tilt, 0.035));
 }
 // 最初の一発で計算が詰まらないように、音を出せるようになったら1フレームに1つずつ素材を作っておく
 const warmList = [];
 function queueWarm() {
   warmList.length = 0;
   for (const a of D.principleOrder) for (let k = 0; k < 3; k++) warmList.push(() => castBuffer(a, k), () => hitBuffer(a, false, k));
-  for (let k = 0; k < 3; k++) warmList.push(() => solidCastBuffer(k), () => solidHitBuffer(false, k), () => hurtBuffer(k));
-  for (const a of D.principleOrder) warmList.push(() => beamBuffer(a, 1), () => hitBuffer(a, true, 1));
+  for (let k = 0; k < 3; k++) warmList.push(() => solidCastBuffer(k), () => solidHitBuffer(false, k), () => solidHitBuffer(true, k), () => hurtBuffer(k));
+  for (const a of D.principleOrder) for (let k = 0; k < 3; k++) warmList.push(() => beamBuffer(a, k), () => hitBuffer(a, true, k));
+  for (let k = 0; k < 3; k++) warmList.push(() => wardBuffer(k));
   warmList.push(glintBuffer, () => flightBuffer('orb'), () => flightBuffer('arc'), () => flightBuffer('metal'));
 }
 function warmAudio() { if (audio.ctx && warmList.length) warmList.shift()(); }
@@ -1321,7 +1320,7 @@ function flightAudio() {
     const d = Math.max(1, hyp(s.x - cam.x, s.y - cam.y));
     const approach = -((s.x - cam.x) * s.vx + (s.y - cam.y) * s.vy) / d;
     voice.source.playbackRate.setTargetAtTime(Math.max(0.72, Math.min(1.35, 1 + approach / 3200)), now, 0.06);
-    voice.gain.gain.setTargetAtTime((1 - d / 650) ** 2 * 0.15, now, 0.035);
+    voice.gain.gain.setTargetAtTime((1 - d / 650) ** 2 * 0.08, now, 0.035);
     if (voice.pan.pan) voice.pan.pan.setTargetAtTime(Math.max(-1, Math.min(1, (s.x - cam.x) / 480)), now, 0.035);
   }
 }
@@ -1345,46 +1344,46 @@ function sfx(name, vol = 1, arg) {
   const recipe = d => typeof arg === 'object' && arg ? arg : { a: arg || d };
   switch (name) {
     case 'cast': materialSound(recipe('motion'), v); break;
-    case 'beam': { const r = recipe('divide'); playBaked(beamBuffer(TIMBRE[r.a] ? r.a : 'divide', pick3()), v * 0.72, vary(1, 0.03)); break; }
+    case 'beam': { const r = recipe('divide'); playBaked(beamBuffer(PRESSURE[r.a] ? r.a : 'divide', pickSound('beam:' + r.a)), v * 0.72, vary(1, 0.03)); break; }
     case 'hit': materialSound(recipe('motion'), v * 0.8, true, false); break;
     case 'blast': materialSound(recipe('motion'), v, true, true); break;
     // 被弾：鈍い。低い「ドッ」と、こもった息の詰まる音。高い音は鳴らさない（毎回少し違う）
     case 'hurt': playBaked(hurtBuffer(pick3()), 0.62 * v, vary(1, 0.06)); break;
     case 'thud': thump(85, 38, 0.35, 0.18 * v); break;
-    case 'ward': [0, 7, 12].forEach((n, i) => osc('sine', 330 * Math.pow(2, n / 12), 330 * Math.pow(2, n / 12), 1.2, 0.04 * v, { at: i * 0.03, attack: 0.03 })); thump(110, 60, 0.3, 0.18 * v); break;
-    case 'shatter': for (let i = 0; i < 3; i++) chime(2400 + Math.random() * 2600, 0.022 * v, 0.8, { at: i * 0.02 + Math.random() * 0.05 }); hiss('highpass', 5200, 2600, 1.5, 0.22, 0.16 * v); thump(100, 45, 0.2, 0.2 * v); break;
-    case 'absorb': osc('sine', 500, 1100, 0.12, 0.045 * v); break;
+    case 'ward': playBaked(wardBuffer(pickSound('ward')), 0.62 * v, vary(1, 0.025)); break;
+    case 'shatter': playBaked(solidHitBuffer(true, pickSound('shatter')), 0.42 * v, vary(0.85, 0.035)); break;
+    case 'absorb': playBaked(castBuffer('convert', pickSound('absorb')), 0.28 * v, 1.15); break;
     // 固体どうしがぶつかる金属音（不協和な倍音）
-    case 'clang': [1870, 2630, 4410].forEach((f, i) => osc('sine', f, f * 0.995, 0.5 - i * 0.12, (0.05 - i * 0.012) * v, { at: i * 0.003 })); hiss('highpass', 4000, 2500, 2, 0.06, 0.14 * v); thump(180, 90, 0.08, 0.18 * v); break;
-    // エネルギーが固体を貫く：鋭く抜ける音
-    case 'pierce': hiss('bandpass', 4800, 1600, 2.5, 0.16, 0.16 * v); osc('sine', 1800, 700, 0.12, 0.035 * v); break;
-    // 固体がエネルギーの膜を剥がす：ざらついた裂け目の音
-    case 'strip': hiss('bandpass', 900, 3000, 1.4, 0.2, 0.18 * v); crackle(0.25, 0.05 * v, 5); break;
+    case 'clang': playBaked(solidHitBuffer(false, pickSound('clang')), 0.4 * v, vary(1.25, 0.035)); break;
+    // エネルギーが固体を貫く：短く抜ける芯
+    case 'pierce': playBaked(castBuffer('divide', pickSound('pierce')), 0.32 * v, vary(1.3, 0.035)); break;
+    // 固体がエネルギーの膜を剥がす：短く沈む圧
+    case 'strip': playBaked(hitBuffer('phase', false, pickSound('strip')), 0.4 * v, vary(0.85, 0.035)); break;
     // 遠雷：長く低いうなり
     case 'thunder': rumble(3.2, 0.3 * v, 420); sub(50, 24, 2.2, 0.36 * v, 0.1); break;
-    case 'reflect': osc('triangle', 700, 1300, 0.08, 0.05 * v); osc('sine', 1900, 1850, 0.4, 0.035 * v); thump(160, 90, 0.1, 0.14 * v); break;
-    case 'buff': [0, 4, 7, 12].forEach((n, i) => osc('sine', 392 * Math.pow(2, n / 12), 392 * Math.pow(2, n / 12), 0.9, 0.035, { at: i * 0.05, attack: 0.03 })); hiss('bandpass', 400, 3000, 1, 0.6, 0.07, { attack: 0.3 }); break;
+    case 'reflect': playBaked(castBuffer('phase', pickSound('reflect')), 0.32 * v, 1.1); break;
+    case 'buff': playBaked(castBuffer('grow', pickSound('buff')), 0.35 * v); break;
     case 'misfire': osc('sawtooth', 180, 40, 0.5, 0.16, { dest: audio.shaper }); hiss('lowpass', 1500, 200, 0.8, 0.6, 0.3); thump(90, 30, 0.6, 0.4); crackle(0.5, 0.08, 8); break;
-    case 'sever': osc('sine', 1300, 300, 0.2, 0.06); hiss('highpass', 5000, 5000, 1, 0.04, 0.06); break;
+    case 'sever': playBaked(hitBuffer('divide', false, pickSound('sever')), 0.25 * v, 1.25); break;
     case 'detonate': osc('triangle', 220, 90, 0.08, 0.1); osc('sine', 1100, 1100, 0.05, 0.035, { at: 0.06 }); break;
     case 'recall': [12, 7, 0].forEach((n, i) => osc('sine', 660 * Math.pow(2, n / 12), 660 * Math.pow(2, n / 12), 0.35, 0.04, { at: i * 0.06 })); break;
-    case 'dodge': hiss('bandpass', 600, 3600, 1, 0.22, 0.2); osc('sine', 300, 800, 0.12, 0.03); break;
+    case 'dodge': playBaked(castBuffer('motion', pickSound('dodge')), 0.22 * v, 1.2); break;
     case 'select': osc('sine', 1100 + (arg || 0) * 150, 1100 + (arg || 0) * 150, 0.07, 0.03); osc('sine', 2200 + (arg || 0) * 300, 2200, 0.04, 0.012); break;
     case 'kill': sub(64, 24, 1.1, 0.46 * v); hiss('lowpass', 1600, 80, 0.8, 0.8, 0.2 * v, { attack: 0.004 }); break;
     // 魔素を拾う：小さな澄んだ一音。続けて拾うと五音音階で上がる
     case 'pickup': { const n = PENTA[Math.min(PENTA.length - 1, Math.floor((arg || 0) / 2))] - 5; playBaked(glintBuffer(), 0.3 * v, Math.pow(2, n / 12) * vary(1, 0.006)); break; }
-    case 'level': [0, 4, 7, 11, 14].forEach((n, i) => osc('sine', 523 * Math.pow(2, n / 12), 523 * Math.pow(2, n / 12), 1.3, 0.04, { at: i * 0.07, attack: 0.02 })); hiss('bandpass', 1000, 8000, 1, 1, 0.06, { attack: 0.4 }); break;
+    case 'level': playBaked(castBuffer('grow', pickSound('level')), 0.42 * v, 0.85); break;
     case 'surge': hiss('bandpass', 300, 1400, 0.8, 0.8, 0.12 * v, { attack: 0.3 }); thump(70, 35, 0.8, 0.22 * v, 0.3); break;
     case 'defeat': defeatSound(v); break;
     case 'down': hiss('lowpass', 700, 100, 0.6, 0.8, 0.1); thump(65, 25, 0.5, 0.2); break;
     // 落雷：予告の和音が上がり、白い雷が落ち、遠くへ轟く
-    case 'strikeWarn': [0, 7, 12].forEach((n, i) => osc('sine', 880 * Math.pow(2, n / 12), 892 * Math.pow(2, n / 12), 0.5, 0.04 * v, { at: i * 0.18, attack: 0.02 })); hiss('highpass', 6000, 6000, 1, 0.5, 0.04 * v, { attack: 0.4 }); break;
+    case 'strikeWarn': [0, 7, 12].forEach((n, i) => osc('sine', 880 * Math.pow(2, n / 12), 892 * Math.pow(2, n / 12), 0.5, 0.04 * v, { at: i * 0.18, attack: 0.02 }));  break;
     case 'strike': skyCrack(1.1 * v); break;
     // 演算の間：低い唸りの上を、機械の音が降りていく
-    case 'bossCall': osc('sawtooth', 55, 40, 2.6, 0.1, { attack: 0.6, dest: audio.shaper }); sub(48, 22, 2.4, 0.5); darkChord(55, 1.4, 2.4); [0, 3, 6, 10, 13].forEach((n, i) => osc('square', 1320 * Math.pow(2, -n / 12), 1300 * Math.pow(2, -n / 12), 0.09, 0.03, { at: 0.3 + i * 0.07 })); hiss('bandpass', 300, 5000, 2, 1.8, 0.08, { attack: 1 }); break;
-    case 'bossLearn': [0, 4, 7, 12, 16, 19].forEach((n, i) => osc('square', 660 * Math.pow(2, n / 12), 660 * Math.pow(2, n / 12), 0.06, 0.025, { at: i * 0.045 })); chime(1980, 0.03, 1, { at: 0.3 }); break;
-    case 'bossDecoy': for (let i = 0; i < 5; i++) hiss('bandpass', 1500 + i * 900, 1500 + i * 900, 4, 0.04, 0.08, { at: i * 0.04 }); osc('sawtooth', 220, 110, 0.3, 0.05, { dest: audio.shaper }); break;
-    case 'join': [0, 7, 12].forEach((n, i) => osc('sine', 392 * Math.pow(2, n / 12), 392 * Math.pow(2, n / 12), 0.9, 0.04, { at: i * 0.08, attack: 0.02 })); hiss('bandpass', 300, 2400, 1, 0.9, 0.1, { attack: 0.6 }); thump(90, 40, 0.6, 0.28, 0.6); break;
+    case 'bossCall': osc('sawtooth', 55, 40, 2.6, 0.1, { attack: 0.6, dest: audio.shaper }); sub(48, 22, 2.4, 0.5); darkChord(55, 1.4, 2.4); [0, 3, 6, 10, 13].forEach((n, i) => osc('square', 1320 * Math.pow(2, -n / 12), 1300 * Math.pow(2, -n / 12), 0.09, 0.03, { at: 0.3 + i * 0.07 })); hiss('lowpass', 500, 180, 0.7, 1.2, 0.025, { attack: 0.4 }); break;
+    case 'bossLearn': [0, 4, 7].forEach((n, i) => osc('sine', 330 * Math.pow(2, n / 12), 300 * Math.pow(2, n / 12), 0.09, 0.025 * v, { at: i * 0.07, attack: 0.006 })); break;
+    case 'bossDecoy': playBaked(hitBuffer('phase', true, pickSound('bossDecoy')), 0.42 * v, 0.8); break;
+    case 'join': [0, 7, 12].forEach((n, i) => osc('sine', 392 * Math.pow(2, n / 12), 392 * Math.pow(2, n / 12), 0.9, 0.04, { at: i * 0.08, attack: 0.02 })); playBaked(castBuffer('bind', pickSound('join')), 0.22, 0.8); thump(90, 40, 0.6, 0.28, 0.6); break;
   }
 }
 // 詠唱の音：力が溜まっていく。柔らかい波形を、少しずつ開くフィルタに通して音程をせり上げ、放つ瞬間に止まる
@@ -1397,8 +1396,8 @@ function chantPad(id, a, dur, vol) {
   out.gain.exponentialRampToValueAtTime(0.075 * vol, end);
   out.gain.exponentialRampToValueAtTime(0.0001, end + 0.1);
   const lp = ac.createBiquadFilter();
-  lp.type = 'lowpass'; lp.Q.value = 2.5;
-  lp.frequency.setValueAtTime(220, t); lp.frequency.exponentialRampToValueAtTime(3200, end);
+  lp.type = 'lowpass'; lp.Q.value = 0.65;
+  lp.frequency.setValueAtTime(220, t); lp.frequency.exponentialRampToValueAtTime(1400, end);
   lp.connect(out); out.connect(audio.out || audio.bus);
   const interval = ROOT[recipe.b] ? ROOT[recipe.b] / (root * 2) * 1.5 : 1.5;
   for (const [m, det, type] of [[1, -6, 'triangle'], [interval, 6, 'sine'], [0.5, 0, 'sine'], [2, 4, 'sine']]) {
@@ -1408,7 +1407,7 @@ function chantPad(id, a, dur, vol) {
     o.connect(lp);
     o.start(t); o.stop(end + 0.15);
   }
-  hiss('bandpass', 600, 5200, 1.2, dur + 0.05, 0.05 * vol, { attack: dur * 0.9 });
+
 }
 
 // 音楽：2つの audio を交差フェードで切り替える。前回と同じ曲は避けて、毎回ちがう曲で始まる
