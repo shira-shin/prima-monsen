@@ -1017,13 +1017,61 @@ function glassBreak(v, dur = 0.7, at = 0) {
     if (i % 3 === 0) hiss('highpass', 5000 + Math.random() * 4500, 3000, 2, 0.025, 0.14 * v, { at: tt });
   }
 }
+// ばらつき：同じ術でも毎回少し違う音になる（音程と長さ）
+const vary = (x, k = 0.08) => x * (1 + (Math.random() * 2 - 1) * k);
+// 光線の本体：鋸波を重ねてうねらせ、フィルターを閉じながら振幅を震わせる。灼ける持続音。
+// flavor でうなり（AM）の速さ・フィルターの動き・高さが変わり、原理ごとに別の光線に聞こえる
+function beamBody(root, v, flavor, dur) {
+  const a = audio.ctx, t = a.currentTime, out = audio.out || audio.bus;
+  const env = a.createGain(), filt = a.createBiquadFilter(), am = a.createGain(), lfo = a.createOscillator(), lfoG = a.createGain();
+  filt.type = 'lowpass'; filt.Q.value = flavor.q;
+  filt.frequency.setValueAtTime(flavor.f0, t); filt.frequency.exponentialRampToValueAtTime(flavor.f1, t + dur);
+  env.gain.setValueAtTime(0.0001, t); env.gain.exponentialRampToValueAtTime(0.2 * v, t + 0.02); env.gain.setValueAtTime(0.2 * v, t + dur * 0.55); env.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  am.gain.value = 0.62; lfo.type = 'square'; lfo.frequency.value = flavor.am; lfoG.gain.value = 0.38;
+  lfo.connect(lfoG); lfoG.connect(am.gain);
+  filt.connect(am); am.connect(env); env.connect(out);
+  [1, 1.007, 2.01, 3.02].forEach((m, k) => {
+    const n = a.createOscillator(), gn = a.createGain();
+    n.type = k < 2 ? 'sawtooth' : 'square'; n.frequency.setValueAtTime(root * m, t); n.frequency.exponentialRampToValueAtTime(root * m * flavor.glide, t + dur);
+    gn.gain.value = k < 2 ? 1 : 0.35; n.connect(gn); gn.connect(filt); n.start(t); n.stop(t + dur + 0.05);
+  });
+  lfo.start(t); lfo.stop(t + dur + 0.05);
+}
+const BEAM_FLAVOR = {
+  motion:  { f0: 9000, f1: 1500, q: 2, am: 95, glide: 1.6 },
+  bind:    { f0: 2400, f1: 700, q: 6, am: 38, glide: 0.8 },
+  divide:  { f0: 12000, f1: 2600, q: 1, am: 140, glide: 1.0 },
+  convert: { f0: 5200, f1: 500, q: 8, am: 55, glide: 0.6 },
+  grow:    { f0: 3800, f1: 1200, q: 3, am: 28, glide: 1.15 },
+  phase:   { f0: 8000, f1: 1800, q: 10, am: 72, glide: 1.3 }
+};
+// 光線を放つ：破裂 → 灼ける持続音 → 空気の裂け目 → 重低音と雷鳴の尾
+function beamSound(r, v) {
+  const root = vary((ROOT[r.a] || 180) * 1.5, 0.07), dur = vary(0.85, 0.15), fl = BEAM_FLAVOR[r.a] || BEAM_FLAVOR.divide;
+  hiss('highpass', 3500, 9500, 0.8, 0.05, 0.85 * v, { attack: 0.0008, dest: audio.shaper });
+  beamBody(root, v, fl, dur);
+  hiss('bandpass', vary(10000, 0.2), 1800, 3, 0.42, 0.34 * v, { attack: 0.003 });
+  osc('sawtooth', vary(4800, 0.15), 160, 0.2, 0.08 * v, { attack: 0.002, dest: audio.shaper });
+  sub(vary(78, 0.1), 26, 1.1, 0.55 * v, 0.01);
+  rumble(vary(2, 0.2), 0.3 * v, 380, 0.08);
+  for (let i = 0; i < 6; i++) hiss('highpass', 3500 + Math.random() * 5000, 2500, 1.5, 0.02, 0.14 * v, { at: 0.03 + Math.random() * dur });
+}
 // 暗い和音：短調の和音が低く沈む。詠唱の「闇」の気配
 function darkChord(root, v, dur = 1.1, at = 0) {
   [1, 1.189, 1.498, 2].forEach((m, i) => osc('sawtooth', root * m, root * m * 1.004, dur, 0.022 * v, { attack: 0.14, at, dest: audio.dark }));
 }
 // エネルギーの魔法を放つ：収束する風、立ち上がるうねり、腹に響く低音。金属音は鳴らさない
 function energyCast(r, v) {
-  const root = ROOT[r.a] || 180;
+  const root = vary(ROOT[r.a] || 180, 0.06);
+  // 原理ごとの個性：動は風を裂き、結は低く唸り、分は鋭く、換は吸い込み、増は膨らみ、相は揺らぐ
+  switch (r.a) {
+    case 'motion': hiss('bandpass', 400, 4200, 1.2, 0.18, 0.2 * v, { at: 0.02 }); break;
+    case 'bind': osc('sine', root * 0.5, root * 0.5, 0.45, 0.1 * v, { attack: 0.12 }); break;
+    case 'divide': hiss('highpass', 5000, 3000, 1, 0.04, 0.2 * v, { dest: audio.shaper }); break;
+    case 'convert': osc('sine', root * 3, root * 0.8, 0.3, 0.07 * v, { attack: 0.08 }); break;
+    case 'grow': hiss('lowpass', 900, 380, 0.7, 0.35, 0.16 * v, { attack: 0.1 }); break;
+    case 'phase': osc('sine', root * 4, root * 4.2, 0.4, 0.05 * v, { attack: 0.1, detune: 14 }); osc('sine', root * 4, root * 3.9, 0.4, 0.05 * v, { attack: 0.1, detune: -14 }); break;
+  }
   hiss('bandpass', 180, 2600, 1.6, 0.3, 0.3 * v, { attack: 0.1 });
   sub(root * 0.5, root * 0.25, 0.55, 0.42 * v, 0.05);
   osc('sawtooth', root, root * 3, 0.22, 0.05 * v, { attack: 0.05, dest: audio.shaper });
@@ -1032,8 +1080,16 @@ function energyCast(r, v) {
 }
 // エネルギーが当たる：鋭い打音、腹に響く低音、圧のかたまり、はぜる粒
 function energyHit(r, v, heavy) {
-  hiss('highpass', 3000, 9000, 0.8, 0.03, 0.55 * v, { attack: 0.001, dest: audio.shaper });
-  sub(heavy ? 70 : 90, 28, heavy ? 1.5 : 0.65, (heavy ? 0.62 : 0.4) * v);
+  hiss('highpass', 3000, 9000, 0.8, 0.03, 0.4 * v, { attack: 0.001, dest: audio.shaper });
+  sub(vary(heavy ? 70 : 90, 0.12), 28, heavy ? 1.5 : 0.65, (heavy ? 0.62 : 0.4) * v);
+  switch (r.a) {
+    case 'bind': osc('sine', vary(140, 0.1), 90, 0.4, 0.16 * v); break;
+    case 'divide': hiss('highpass', 4200, 2200, 1.2, 0.07, 0.3 * v, { dest: audio.shaper }); break;
+    case 'convert': osc('sine', 900, 160, 0.25, 0.09 * v); break;
+    case 'grow': hiss('lowpass', 800, 260, 0.7, 0.3, 0.2 * v, { attack: 0.02 }); break;
+    case 'phase': osc('sine', 1500, 700, 0.3, 0.06 * v, { detune: 12 }); osc('sine', 1500, 690, 0.3, 0.06 * v, { detune: -12 }); break;
+    default: hiss('bandpass', 1200, 300, 1, 0.18, 0.22 * v);
+  }
   hiss('lowpass', 2200, 90, 0.7, heavy ? 1.1 : 0.38, 0.32 * v, { attack: 0.003 });
   crackle(heavy ? 0.5 : 0.25, 0.1 * v, heavy ? 10 : 5);
   if (heavy) rumble(1.6, 0.26 * v, 300, 0.05);
@@ -1207,12 +1263,8 @@ function sfx(name, vol = 1, arg) {
     }
     case 'beam':
       // 先端の破裂を短く、空気の裂ける尾を長く残す。
-      playTexture('arc', 'beam', v * 0.6, 0.9 + (ROOT[arg && arg.a] || 180) / 1800);
-      airTear(v);
-      glassBreak(v * 1.1, 0.8, 0.02);
-      skyCrack(v * 0.8, 0.02);
-      osc('sawtooth', 58, 60, 0.6, 0.05 * v, { attack: 0.02, dest: audio.shaper });
-      darkChord((ROOT[arg && arg.a] || 180) * 0.5, v, 1.3);
+      playTexture('arc', 'beam', v * 0.45, vary(0.9 + (ROOT[arg && arg.a] || 180) / 1800, 0.05));
+      beamSound(typeof arg === 'object' && arg ? arg : { a: arg || 'divide' }, v);
       break;
     case 'hit': case 'blast': {
       const r = typeof arg === 'object' && arg ? arg : { a: arg || 'motion' };
@@ -1222,7 +1274,15 @@ function sfx(name, vol = 1, arg) {
       if (heavy) playTexture(materialOf(r), 'impact', v * 0.3, 0.62, 0.035);
       break;
     }
-    case 'hurt': sub(95, 30, 0.55, 0.5 * v); thump(140, 50, 0.24, 0.4 * v); hiss('lowpass', 1400, 250, 0.8, 0.18, 0.24 * v); osc('sawtooth', 90, 60, 0.12, 0.05 * v, { dest: audio.shaper }); break;
+    // 被弾：鈍い。低い「ドッ」と、こもった息の詰まる音。高い音は鳴らさない（毎回少し違う）
+    case 'hurt': {
+      const k = Math.floor(Math.random() * 3);
+      sub(vary(70, 0.12), 32, 0.32, 0.55 * v);
+      hiss('lowpass', vary(520, 0.2), 110, 0.7, 0.2, (0.3 + k * 0.04) * v, { attack: 0.002 });
+      if (k === 1) thump(vary(110, 0.1), 48, 0.12, 0.3 * v, 0.03);
+      if (k === 2) hiss('lowpass', 260, 90, 0.9, 0.3, 0.18 * v, { attack: 0.02, at: 0.04 });
+      break;
+    }
     case 'thud': thump(85, 38, 0.35, 0.2 * v); break;
     case 'ward': [0, 7, 12].forEach((n, i) => osc('sine', 330 * Math.pow(2, n / 12), 330 * Math.pow(2, n / 12), 1.2, 0.05 * v, { at: i * 0.03, attack: 0.03 })); thump(110, 60, 0.3, 0.2 * v); hiss('highpass', 5000, 5000, 1, 0.1, 0.06 * v); break;
     case 'shatter': for (let i = 0; i < 4; i++) chime(2600 + Math.random() * 3200, 0.03 * v, 0.9, { at: i * 0.015 + Math.random() * 0.06 }); for (let i = 0; i < 5; i++) osc('sine', 2200 + i * 700, 1800 + i * 500, 0.3, 0.05 * v, { at: i * 0.012 }); hiss('highpass', 5200, 2800, 2, 0.25, 0.22 * v); thump(100, 45, 0.2, 0.2 * v); break;
@@ -3214,20 +3274,6 @@ function drawPart(p) {
     }
     ctx.globalAlpha = a;
     for (let i = 0; i < 6; i++) { const k = (i / 6 + f * 2) % 1, x = p.x + (p.x2 - p.x) * k, y = p.y + (p.y2 - p.y) * k; ctx.drawImage(glow(p.ink), x - p.w * 2, y - p.w * 2, p.w * 4, p.w * 4); }
-    // プリズム：光が屈折して、冷たい青と暖かい赤に割れて並走し、結晶の粒が瞬く
-    const split = w0 * (1.8 + f * 2.4);
-    for (const [sg, col2] of [[-1, 'rgba(110,200,255,'], [1, 'rgba(255,140,170,']]) {
-      ctx.strokeStyle = col2 + (0.7 * a) + ')'; ctx.lineWidth = Math.max(1.5, w0 * 0.8);
-      ctx.beginPath(); ctx.moveTo(p.x + nx * split * sg, p.y + ny * split * sg); ctx.lineTo(p.x2 + nx * split * sg * 1.8, p.y2 + ny * split * sg * 1.8); ctx.stroke();
-    }
-    const spark = LOW ? 4 : 9;
-    for (let i = 0; i < spark; i++) { const k = (i * 0.37 + f * 0.9 + p.x * 0.001) % 1, tw = Math.max(0, Math.sin(f * 14 + i * 2.3)); drawStar(ctx, p.x + dx * k + nx * (Math.sin(i * 5) * w0 * 1.6), p.y + dy * k + ny * (Math.sin(i * 5) * w0 * 1.6), w0 * (0.9 + tw * 1.8), '#ffffff', a * tw); }
-    drawStar(ctx, p.x2, p.y2, w0 * 6 * a, '#ffffff', a * 0.95);
-    // 屈折した宝石が光線に沿って流れていく
-    ctx.save(); ctx.globalCompositeOperation = 'source-over';
-    const gn = LOW ? 3 : Math.min(9, Math.max(3, Math.floor(L / 110)));
-    for (let i = 0; i < gn; i++) { const k = (i / gn + f * 0.5) % 1, side = i % 2 ? 1 : -1; ctx.save(); ctx.translate(p.x + dx * k + nx * side * w0 * 2.6, p.y + dy * k + ny * side * w0 * 2.6); ctx.globalAlpha = a; drawGem(ctx, 4 + w0 * 0.9, c, f * 8 + i, 6, f * 3, i); ctx.restore(); }
-    ctx.restore();
   } else if (p.kind === 'bolt') {
     ctx.globalAlpha = 1 - f; ctx.strokeStyle = c; ctx.lineWidth = p.w;
     ctx.beginPath(); ctx.moveTo(p.x, p.y);
