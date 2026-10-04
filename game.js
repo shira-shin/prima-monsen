@@ -3763,6 +3763,7 @@ function buildLobby() {
   }
   $('cryTest').addEventListener('click', () => { unlockAudio(); speak(profile.cries.win, 'win'); speakLater(profile.cries.death, 'death', 2.4); });
   $('againBtn').addEventListener('click', () => join());
+  $('rematchBtn').addEventListener('click', () => join('special'));
   $('lobbyBtn').addEventListener('click', toLobby);
   $('leaveBtn').addEventListener('click', leave);
   $('sfxBtn').addEventListener('click', toggleSfx);
@@ -4504,9 +4505,11 @@ function heroDown(e) {
     $('dSeal').textContent = tier.seal;
     $('dTier').textContent = special ? L('位階は0に戻った。{0}・計 {1} pt', tier.name, fmt(profile.points)) : L('{0}・計 {1} pt', tier.name, fmt(profile.points));
     $('dRankUp').hidden = !(res && res.up);
+    // 演算の間で散ったときの救済：同じ演算体にすぐ再び挑める（位階は0のまま）
+    $('rematchBtn').hidden = !special;
     $('death').hidden = false;
     deathReady = true;
-    $('againBtn').focus();
+    (special ? $('rematchBtn') : $('againBtn')).focus();
   }, 2300);
 }
 function leave() {
