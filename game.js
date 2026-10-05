@@ -199,6 +199,9 @@ const grainTile = makeTile(256, (g, n) => {
 const grainPat = ctx.createPattern(grainTile, 'repeat');
 // 魔素の粒の色：術者の色をそのまま撒かず、温かい白に寄せる（床が色紙の散らばりに見えないように）
 const moteCache = {};
+// 誰の紋も帯びていない魔素の色：骨のような淡い白
+let paleMote = null;
+const PALE_MOTE = () => paleMote || (paleMote = glow('#ece6d8'));
 function moteGlow(k) {
   if (!moteCache[k]) {
     const n = parseInt(hex(k).slice(1), 16), mix = (v, w) => Math.round(v * 0.28 + w * 0.72);
@@ -506,8 +509,12 @@ function flareFx(x, y, len, ink, life = 0.3) { parts.push({ kind: 'flare', x, y,
 function embers(x, y, ink, n, speed, dir = null, spread = Math.PI) {
   for (let i = 0; i < n; i++) {
     const a = dir === null ? rnd(0, TAU) : dir + rnd(-spread, spread), s = rnd(0.2, 1) * speed;
-    parts.push({ kind: 'ember', x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, r: rnd(1, 2.4), ink, t: 0, life: rnd(0.4, 0.95) });
+    parts.push({ kind: 'ember', x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, r: rnd(1, 2.4), ink, t: 0, life: rnd(0.7, 1.5) });
   }
+}
+// 灰が降る：頭上から灰の欠片がゆっくり降りてくる（勝った者にも、散った者にも同じ灰が降る）
+function ashFall(x, y, n, r = 40) {
+  for (let i = 0; i < n; i++) parts.push({ kind: 'ash', x: x + rnd(-r, r), y: y - rnd(20, 90), vx: rnd(-12, 12), vy: rnd(8, 26), r: rnd(1.2, 2.4), ink: '#8a8798', t: 0, life: rnd(1.6, 2.8) });
 }
 // 電弧：一瞬だけ走るぎざぎざの光。描くたびに形が変わる
 function arcFx(x, y, len, ink, life = 0.1) { const a = rnd(0, TAU), l = len * rnd(0.5, 1); lineFx('arc', x, y, x + Math.cos(a) * l, y + Math.sin(a) * l, ink, life, rnd(1, 2)); }
@@ -588,12 +595,14 @@ function consumeEvents() {
         const r = u.spells[e.slot];
         const big = e.t >= D.chant.voiceAt || e.named;
         castCircles.push({ id: u.id, a: e.a, b: e.b, col: e.col, words: chantWords(r).join(L('・')), name: e.name, t: 0, life: e.t + 0.3, total: e.t, big, rot: rnd(0, TAU) });
+        const rayCast = r.stages[0].vessel === 'ray';
         if (e.id === meId) {
           chantPad(u.id, S.lookOf(r, 0), e.t, 1);
+          if (rayCast) chargeWhine(e.t, 1);
           if (e.named) speak(`${e.name}！`, 'spell');
           if (big) say(u, `${e.name}！`, 'chant');
         } else if (big) {
-          withPan(u.x, () => chantPad(u.id, S.lookOf(r, 0), e.t, 0.35 * vol(u.x, u.y)));
+          withPan(u.x, () => { chantPad(u.id, S.lookOf(r, 0), e.t, 0.35 * vol(u.x, u.y)); if (rayCast) chargeWhine(e.t, 0.35 * vol(u.x, u.y)); });
           if (Math.random() < 0.6) say(u, `${e.name}！`, 'chant');
         }
         break;
@@ -602,13 +611,16 @@ function consumeEvents() {
         const u = S.unitById(world, e.id);
         if (!u || !near(u.x, u.y)) break;
         const tip = staffTip(u), beam = e.beh === 'beam';
+        // 放った術と杖を、一瞬だけ魔力の筋がつなぐ（魔力で撃ち出している手応え）
+        if (e.rtype === 'bolt') parts.push({ kind: 'tether', id: u.id, x: tip.x, y: tip.y, a: e.aim, ink: e.col, t: 0, life: 0.22 });
         // 放つ瞬間：杖先の前に小さな陣が開いて閉じ、白い芯がはじけ、狙いの向きへ火花が数本だけ走る
         muzzleFx(tip.x + Math.cos(e.aim) * 8, tip.y + Math.sin(e.aim) * 8, e.aim, beam ? 22 : 15, e.col, beam ? 0.42 : 0.3);
         flash(tip.x, tip.y, beam ? 48 : 30, e.col, 0.14);
         shockFx(tip.x, tip.y, beam ? 40 : 24, e.col, 0.2);
         spray(tip.x, tip.y, e.col, beam ? 6 : 4, 340, e.aim, 0.25, 2);
         if (beam) embers(tip.x, tip.y, e.col, 4, 200, e.aim, 0.6);
-        if (!beam && e.form !== 'plane') sfxAt('cast', e.id === meId ? 1 : 0.3 * vol(u.x, u.y), e, u.x);
+        // 器ごとに音を分ける：弾は射出音、線は光線の轟音。面・円・纏・環はそれぞれ生まれた瞬間の出来事で鳴らす
+        if (e.rtype === 'bolt') sfxAt('cast', e.id === meId ? 1 : 0.3 * vol(u.x, u.y), e, u.x);
         else if (beam) sfxAt('beam', e.id === meId ? 1 : 0.35 * vol(u.x, u.y), e, u.x);
         if (e.id === meId) punch = Math.max(punch, beam ? 0.035 : 0.012);
         break;
@@ -616,7 +628,8 @@ function consumeEvents() {
       case 'buff': {
         const u = S.unitById(world, e.id);
         if (u && near(u.x, u.y)) { circleFx(u.x, u.y + u.r * 0.3, u.r * 2.4, e.col, 0.8); ringFx(u.x, u.y, u.r, u.r * 2.8, e.col, 0.55, 3); principleFx(e.kind, u.x, u.y, u.r * 1.6, e.col, null, 0.6); }
-        if (e.id === meId) { sfx('buff', 1); toast(L('纏：{0}', D.principles[e.kind].name), L('自分の紋の魔力を体へ書き込んだ')); }
+        if (u && near(u.x, u.y)) sfxAt('body', e.id === meId ? 1 : 0.35 * vol(u.x, u.y), e.kind, u.x);
+        if (e.id === meId) toast(L('纏：{0}', D.principles[e.kind].name), L('自分の紋の魔力を体へ書き込んだ'));
         break;
       }
       case 'misfire': {
@@ -661,6 +674,13 @@ function consumeEvents() {
         break;
       case 'activate':
         if (!near(e.x, e.y)) break;
+        // 段の連鎖：術者の魔力が杖から次の段へ流れ込み、継ぎ目に小さな陣が灯る
+        if (e.cond) {
+          const o = S.unitById(world, e.owner);
+          parts.push({ kind: 'relay', x: e.x, y: e.y, r: 26, ink: e.col, t: 0, life: 0.55 });
+          if (o && o.alive && hyp(o.x - e.x, o.y - e.y) < 900) { const tip = staffTip(o); parts.push({ kind: 'link', id: o.id, x: tip.x, y: tip.y, x2: e.x, y2: e.y, ink: e.col, t: 0, life: 0.5 }); }
+          sfxAt('link', e.owner === meId ? 0.9 : 0.35 * vol(e.x, e.y), null, e.x);
+        }
         // 起動：広がり方の大きさで光が開き、原理の光が重なる
         flash(e.x, e.y, e.r * 1.3, e.col, 0.3);
         ringFx(e.x, e.y, e.r * 0.25, e.r, e.col, 0.42, e.form === 'point' ? 1.4 : 2.4);
@@ -675,7 +695,8 @@ function consumeEvents() {
           smokeFx(e.x, e.y, e.r * 0.4, 3);
           stain(e.x, e.y, e.r * 0.5, e.col, 10);
         }
-        if (e.form !== 'point' || e.deploy === 'burst') {
+        // 爆ぜる音は円の炸裂と光線だけ。面・環・纏は器の音（ガラス・金属・回転・燃え移り）で鳴らす
+        if (e.deploy === 'burst' || e.rtype === 'ray') {
           sfxAt('blast', e.owner === meId ? 1 : 0.5 * vol(e.x, e.y), e, e.x);
           shake(e.owner === meId ? 4.5 : 1);
           if (e.owner === meId || hyp(e.x - cam.x, e.y - cam.y) < 260) flashScreen(e.col, 0.06);
@@ -684,20 +705,31 @@ function consumeEvents() {
         break;
       case 'beam':
         if (!near(e.x1, e.y1) && !near(e.x2, e.y2) && !near((e.x1 + e.x2) / 2, (e.y1 + e.y2) / 2)) break;
-        // 光線は一本の光だけで見せる（並走する線や流れる玉は足さない）。始点の光芒と、終点の衝撃
-        parts.push({ kind: 'beam', x: e.x1, y: e.y1, x2: e.x2, y2: e.y2, w: e.w, ink: e.col, t: 0, life: 0.62, seed: rnd(0, 9) });
-        if (near(e.x1, e.y1)) flareFx(e.x1, e.y1, 80, e.col, 0.26);
-        if (near(e.x2, e.y2)) {
-          const bd = Math.atan2(e.y2 - e.y1, e.x2 - e.x1);
-          impactFx(e.x2, e.y2, e.col, 46, bd);
-          flareFx(e.x2, e.y2, 110, e.col, 0.26);
-          embers(e.x2, e.y2, e.col, 6, 260, bd, 1);
-          principleFx(e.a, e.x2, e.y2, 44, e.col, bd, 0.7);
+      {
+        // 光線は一本の光だけで見せる（並走する線や流れる玉は足さない）。始点に立つ陣から撃ち出し、終点は焼ける
+        const bd = Math.atan2(e.y2 - e.y1, e.x2 - e.x1), L2 = hyp(e.x2 - e.x1, e.y2 - e.y1);
+        parts.push({ kind: 'beam', x: e.x1, y: e.y1, x2: e.x2, y2: e.y2, w: e.w, ink: e.col, t: 0, life: 0.85, seed: rnd(0, 9) });
+        if (near(e.x1, e.y1)) {
+          parts.push({ kind: 'gate', x: e.x1 + Math.cos(bd) * 6, y: e.y1 + Math.sin(bd) * 6, a: bd, r: 24 + e.w * 2.8, ink: e.col, t: 0, life: 0.75, rune: Math.floor(rnd(0, 28)) });
+          shockFx(e.x1, e.y1, 50 + e.w * 2, e.col, 0.3);
+          flareFx(e.x1, e.y1, 90, e.col, 0.26);
         }
-        if (e.id === meId) { shake(3.5); flashScreen(e.col, 0.04); }
+        // 光線に沿って前へ吹き抜ける火の粉（少しだけ）
+        for (let i = 0; i < (LOW ? 3 : 7); i++) { const q = rnd(0.05, 0.95), x = e.x1 + (e.x2 - e.x1) * q, y = e.y1 + (e.y2 - e.y1) * q; if (near(x, y)) parts.push({ kind: 'spark', x, y, vx: Math.cos(bd) * rnd(260, 520) + rnd(-40, 40), vy: Math.sin(bd) * rnd(260, 520) + rnd(-40, 40), r: rnd(1, 2), ink: e.col, t: 0, life: rnd(0.25, 0.45) }); }
+        if (near(e.x2, e.y2)) {
+          impactFx(e.x2, e.y2, e.col, 52, bd);
+          flareFx(e.x2, e.y2, 120, e.col, 0.3);
+          embers(e.x2, e.y2, e.col, 8, 280, bd + Math.PI, 1.1);
+          principleFx(e.a, e.x2, e.y2, 44, e.col, bd, 0.7);
+          stain(e.x2, e.y2, 14 + e.w, e.col, 8);
+          if (L2 > 60) smokeFx(e.x2, e.y2, 16, 2);
+        }
+        if (e.id === meId) { shake(4.5); punch = Math.max(punch, 0.04); flashScreen(e.col, 0.06); }
         break;
+      }
       case 'chain':
         lineFx('bolt', e.x1, e.y1, e.x2, e.y2, e.col, 0.24, 2.5);
+        if (near(e.x2, e.y2)) sfxAt('zap', 0.5 * vol(e.x2, e.y2), null, e.x2);
         break;
       case 'blink':
         lineFx('streak', e.x1, e.y1, e.x2, e.y2, e.col, 0.35, 10);
@@ -705,16 +737,21 @@ function consumeEvents() {
         break;
       case 'zone':
         if (near(e.x, e.y)) circleFx(e.x, e.y, e.r, e.col, 0.55);
-        if (e.kind === 'blades' && near(e.x, e.y)) { principleFx('bind', e.x, e.y, e.r, e.col, null, 0.7); if (e.owner === meId) sfx('clang', 0.8); }
-        if (e.kind === 'wall' && near(e.x, e.y)) sfxAt('ward', e.owner === meId ? 1 : 0.3 * vol(e.x, e.y), null, e.x);
-        if (e.owner === meId && ['bulwark', 'shift', 'counter'].includes(e.rtype)) sfx('ward', 1);
+        {
+          const v2 = e.owner === meId ? 1 : 0.32 * vol(e.x, e.y);
+          if (e.kind === 'blades' && near(e.x, e.y)) { principleFx('bind', e.x, e.y, e.r, e.col, null, 0.7); sfxAt('orbit', v2, e, e.x); }
+          if (e.kind === 'wall' && near(e.x, e.y)) sfxAt('wallUp', v2, e, e.x);
+          if (e.kind === 'field' && near(e.x, e.y)) sfxAt('domain', v2, e, e.x);
+          // 結のある円（結界）：空間が開く音に、張られる膜のガラス・金属の響きを重ねる
+          if (e.rtype === 'bulwark' && near(e.x, e.y)) sfxAt('wallUp', v2 * 0.7, e, e.x);
+        }
         break;
       case 'wardBreak':
         if (near(e.x, e.y)) {
           principleFx('bind', e.x, e.y, e.big ? e.r : e.r * 2, e.col, null, e.big ? 1 : 0.6);
           shockFx(e.x, e.y, e.r * 2, e.col, 0.3);
           for (let i = 0; i < (e.big ? 10 : 5); i++) { const an = rnd(0, TAU), sp = rnd(90, 260); parts.push({ kind: 'shard', x: e.x, y: e.y, vx: Math.cos(an) * sp, vy: Math.sin(an) * sp, r: rnd(2.5, 5), ink: e.col, t: 0, life: rnd(0.5, 0.9), rot: rnd(0, TAU), spin: rnd(-8, 8) }); }
-          sfxAt('shatter', vol(e.x, e.y), null, e.x);
+          sfxAt(e.matter === 'solid' ? 'shatter' : 'glassBreak', vol(e.x, e.y), null, e.x);
           if (e.big) {
             // 結界が砕ける：割れた膜の破片が四方へ飛び、白い閃光
             flash(e.x, e.y, e.r * 1.4, '#fffaf0', 0.18); smokeFx(e.x, e.y, e.r * 0.4, 3); embers(e.x, e.y, e.col, 12, e.r * 2.6);
@@ -809,6 +846,8 @@ function consumeEvents() {
           spray(e.x, e.y, '#cfd8ff', 14, 420, null, Math.PI, 2.4); embers(e.x, e.y, '#cfd8ff', 12, 380); stain(e.x, e.y, e.r * 1.2, '#7a1f2b', 22);
           shake(8); flashScreen('#cfd8ff', 0.14);
           sfxAt('strike', vol(e.x, e.y), null, e.x);
+          // 唐突な雷のあとの、無関心な静けさ
+          if (hyp(e.x - cam.x, e.y - cam.y) < 600) duck(0.4, 0.8, 1.5, 0.15);
         }
         break;
       case 'bossLearn':
@@ -843,6 +882,7 @@ function consumeEvents() {
           smokeFx(e.x, e.y, e.r, 4);
           stain(e.x, e.y, e.r * 1.5, e.ink, 16);
           stamp(e.x, e.y, e.r * 1.6, e.ink, victim ? victim.crest : 'ring');
+          ashFall(e.x, e.y, LOW ? 6 : 14, e.r * 1.5);
           if (audio.ctx && profile.sfx && audio.ctx.state === 'running') {
             withPan(e.x, () => { playTexture('arc', 'impact', vol(e.x, e.y) * 0.4, 0.7); });
             sfxAt('defeat', (e.victim === meId ? 1 : 0.8) * vol(e.x, e.y), null, e.x);
@@ -851,6 +891,7 @@ function consumeEvents() {
         if (world.room.special && world.boss && e.victim === world.boss.id && mode === 'play' && !winT) specialWon();
         // 断末魔と勝利宣言
         const killer = e.killer && S.unitById(world, e.killer);
+        if (killer && killer.alive && near(killer.x, killer.y)) ashFall(killer.x, killer.y - killer.r, LOW ? 4 : 10, killer.r * 1.4);
         if (e.victim === meId) { say(null, e.deathCry, 'death', e.x, e.y); speak(e.deathCry, 'death'); }
         else if (near(e.x, e.y) && Math.random() < 0.6) say(null, e.deathCry, 'death', e.x, e.y);
         if (killer) {
@@ -859,6 +900,8 @@ function consumeEvents() {
           else if (near(killer.x, killer.y) && Math.random() < 0.5) say(killer, e.winCry, 'win');
         }
         if (involved) { freeze = 0.08; shake(10); punch = 0.05; flashScreen(e.ink, 0.12); }
+        // 撃破の後の間：崩れる音の頭だけ聞こえて、世界が黙る。自分が散ったときは長く
+        if (e.victim === meId) duck(0.55, 1.3, 1.8, 0.1); else if (e.killer === meId) duck(0.18, 0.45, 0.9, 0.2);
         if (e.killer === meId) { sfx('kill', 1); toast(L('{0} を散らした', e.victimName), L('+{0} 魔素', fmt(e.mass * W.death.killerShare + W.death.killerBase))); }
         else if (e.victim !== meId && near(e.x, e.y)) sfx('thud', 0.5 * vol(e.x, e.y));
         feedKill(e, meId);
@@ -874,7 +917,14 @@ function consumeEvents() {
       case 'surge':
         if (near(e.x, e.y)) { ringFx(e.x, e.y, 40, 360, 'yellow', 0.9, 6); flash(e.x, e.y, 260, 'yellow', 0.5); sfx('surge', 0.6 * vol(e.x, e.y)); }
         break;
+      case 'zoneEnd':
+        // 場が散る：縁から光の粒が昇って消える（構造が魔素に戻る瞬間がいちばん光る）。そのあとは何も残らない
+        if (near(e.x, e.y)) sfxAt('dissolve', 0.4 * vol(e.x, e.y), null, e.x);
+        if (near(e.x, e.y)) for (let i = 0; i < (LOW ? 6 : 14); i++) { const an = rnd(0, TAU), d = rnd(30, 110); parts.push({ kind: 'rise', x: e.x + Math.cos(an) * d, y: e.y + Math.sin(an) * d, vx: rnd(-10, 10), vy: -rnd(50, 120), r: rnd(1.4, 2.6), ink: e.col, t: 0, life: rnd(0.6, 1.1) }); }
+        break;
       case 'pickup':
+        // 拾った魔素は自分の紋を帯びる：淡い光が自分の色に染まりながら吸い込まれる
+        if (me && parts.length < (LOW ? 300 : 900)) parts.push({ kind: 'absorb', id: me.id, x: e.x, y: e.y, ink: me.ink, t: 0, life: 0.28 });
         pickupCombo = Math.min(24, pickupCombo + 1); pickupT = 0.4;
         sfx('pickup', Math.min(0.6, 0.25 + e.v * 0.08), pickupCombo);
         break;
@@ -891,8 +941,10 @@ function updateFx(dt) {
     if (p.t > p.life) { parts.splice(i, 1); continue; }
     if (p.vx !== undefined) {
       p.x += p.vx * dt; p.y += p.vy * dt;
-      const f = Math.pow(p.kind === 'rise' || p.kind === 'petal' ? 0.5 : p.kind === 'gem' ? 0.22 : p.kind === 'ember' ? 0.14 : 0.04, dt); p.vx *= f; p.vy *= f;
+      const f = Math.pow(p.kind === 'rise' || p.kind === 'petal' || p.kind === 'ash' ? 0.5 : p.kind === 'gem' ? 0.22 : p.kind === 'ember' ? 0.14 : 0.04, dt); p.vx *= f; p.vy *= f;
       if (p.kind === 'petal') p.vy += 40 * dt;
+      // 光を失った火の粉と灰は、ゆっくり落ちて揺れる
+      if ((p.kind === 'ember' && p.t > p.life * 0.55) || p.kind === 'ash') { p.vy += 26 * dt; p.vx += Math.sin(p.t * 3 + p.r * 9) * 18 * dt; }
     }
     if (p.spin) p.rot += p.spin * dt;
   }
@@ -916,6 +968,9 @@ function updateFx(dt) {
       // 詠唱中：光が足元へ渦を巻いて集まり、杖先で電弧がはぜ、体から力が立ちのぼる
       const col = S.recipeResult(u.spells[u.casting.slot]).color;
       if (Math.random() < dt * 16) parts.push({ kind: 'swirl', x: u.x, y: u.y + u.r * 0.35, r: u.r * rnd(1.2, 2.2), a0: rnd(0, TAU), ink: col, t: 0, life: 0.6, size: rnd(1.2, 2.2) });
+      // 杖先へ光が吸い寄せられて溜まる（光線は強く）
+      const ray = u.spells[u.casting.slot].stages[0].vessel === 'ray';
+      if (Math.random() < dt * (ray ? 22 : 9)) { const tip = staffTip(u), an = rnd(0, TAU), d = rnd(40, ray ? 90 : 60); parts.push({ kind: 'drain', x: tip.x + Math.cos(an) * d, y: tip.y + Math.sin(an) * d, tx: tip.x, ty: tip.y, ink: col, t: 0, life: rnd(0.3, 0.45) }); }
       if (Math.random() < dt * 7) parts.push({ kind: 'rise', x: u.x + rnd(-u.r, u.r) * 0.8, y: u.y + u.r * 0.3, vx: rnd(-8, 8), vy: -rnd(90, 170), r: rnd(1.4, 2.6), ink: col, t: 0, life: rnd(0.4, 0.8) });
     }
     if (u.vitalT > 0 && Math.random() < dt * 8) parts.push({ kind: 'petal', x: u.x + rnd(-u.r, u.r), y: u.y - u.r * rnd(0, 2), vx: rnd(-10, 10), vy: -40, r: rnd(2, 3.5), ink: 'green', t: 0, life: 0.9, rot: 0, spin: 3 });
@@ -942,7 +997,7 @@ function unlockAudio() {
     const a = audio.ctx = new AC();
     // 圧縮：大きな爆発でも割れず、小さな音も前に出る
     const comp = a.createDynamicsCompressor();
-    if (comp.threshold) { comp.threshold.value = -18; comp.knee.value = 10; comp.ratio.value = 5; comp.attack.value = 0.003; comp.release.value = 0.2; }
+    if (comp.threshold) { comp.threshold.value = -14; comp.knee.value = 8; comp.ratio.value = 4; comp.attack.value = 0.005; comp.release.value = 0.2; }
     comp.connect(a.destination);
     audio.master = a.createGain(); audio.master.connect(comp);
     setSfxVolume();
@@ -1005,8 +1060,6 @@ function hiss(type, f0, f1, q, dur, vol, o = {}) {
 }
 // 打撃の芯：ごく短い立ち上がりの低音。体に響く「ドン」
 function thump(f0, f1, dur, vol, at = 0) { osc('sine', f0, f1, dur, vol, { attack: 0.002, at }); }
-// 電気のはぜる音：短い雑音の粒をばらまく
-function crackle(dur, vol, n = 6) { for (let i = 0; i < n; i++) hiss('highpass', 3000 + Math.random() * 4000, 2500, 1.5, 0.018, vol * (0.4 + Math.random() * 0.6), { at: Math.random() * dur }); }
 // 重低音：沈んでいく低い正弦波に、倍音（歪み）を足して小さなスピーカーでも聞こえるようにする
 function sub(f0, f1, dur, vol, at = 0) {
   osc('sine', f0, f1, dur, vol, { attack: 0.004, at });
@@ -1018,34 +1071,18 @@ function rumble(dur, vol, f0 = 360, at = 0) {
   hiss('lowpass', f0, 45, 0.8, dur, vol, { attack: 0.05, at });
   for (let i = 1; i <= 3; i++) hiss('lowpass', f0 * 0.7, 50, 0.9, dur * (0.5 + i * 0.15), vol * 0.5, { attack: 0.1 * i, at: at + i * dur * 0.18 });
 }
-// 空を割る直撃音：鋭い破裂、急降下する空気の裂け目、はぜる雷の粒、そして重い轟き
-function skyCrack(v, at = 0) {
-  hiss('lowpass', 1800, 900, 0.65, 0.035, 0.2 * v, { attack: 0.0008, at, dest: audio.shaper });
-  hiss('lowpass', 1300, 300, 0.7, 0.18, 0.16 * v, { attack: 0.001, at, dest: audio.shaper });
-  hiss('bandpass', 1800, 300, 1.2, 0.5, 0.16 * v, { attack: 0.01, at: at + 0.03 });
-  for (let i = 0; i < 4; i++) hiss('lowpass', 700 + Math.random() * 500, 300, 0.7, 0.025, 0.04 * v * (0.4 + Math.random() * 0.6), { at: at + 0.02 + Math.random() * 0.4 });
-  sub(70, 26, 1.3, 0.6 * v, at + 0.01);
-  rumble(2.6, 0.4 * v, 430, at + 0.07);
-}
 // ばらつき：同じ術でも毎回少し違う音になる（音程と長さ）
 const vary = (x, k = 0.08) => x * (1 + (Math.random() * 2 - 1) * k);
 // 倒される：体を保てなくなる。崩れ落ちる重低音、ほどける息、力が抜けて落ちていく音程、灰の降る気配
+// 体が魔素に戻る：沈む重低音の上で、ガラスの欠片のような澄んだ粒がほどけて降り、やがて何も残らない（祝う和音は鳴らさない）
 function defeatSound(v) {
-  sub(vary(62, 0.08), 20, 2.2, 0.62 * v);
-  hiss('lowpass', 2200, 90, 0.8, 1.4, 0.3 * v, { attack: 0.004 });
-  osc('sine', vary(330, 0.08), 80, 1.6, 0.07 * v, { attack: 0.05, detune: 8 });
-  osc('sine', vary(332, 0.08), 82, 1.6, 0.07 * v, { attack: 0.05, detune: -8 });
-  darkChord(55, v, 2.2, 0.05);
-  rumble(2.2, 0.2 * v, 260, 0.1);
-  for (let i = 0; i < 3; i++) hiss('lowpass', 850 - i * 160, 250, 0.7, 0.07, 0.025 * v, { at: 0.35 + i * 0.15 });
+  playBaked(dissolveBuffer(0, pick3()), 0.75 * v, vary(1, 0.04));
+  sub(vary(62, 0.08), 20, 2.0, 0.42 * v);
 }
 // 暗い和音：短調の和音が低く沈む
 function darkChord(root, v, dur = 1.1, at = 0) {
   [1, 1.189, 1.498, 2].forEach(m => osc('sawtooth', root * m, root * m * 1.004, dur, 0.02 * v, { attack: 0.14, at, dest: audio.dark }));
 }
-// 結晶・ガラスの響き：割り切れない比の部分音が重なり、高いものほど速く消える（固体・砕ける音だけに使う）
-const GLASS = [1, 2.76, 5.4, 8.93];
-function chime(f, v, dur = 1.4, o = {}) { v *= 2.4; GLASS.forEach((m, i) => osc('sine', f * m, f * m * 0.998, dur / (1 + i * 0.9), v / (1 + i * 1.4), { attack: 0.0008 + i * 0.0006, at: o.at || 0, dest: o.dest })); }
 const PENTA = [0, 2, 4, 7, 9, 12, 14, 16, 19, 21, 24];
 // 原理ごとの詠唱の響きの根音（Hz）
 const ROOT = { motion: 220, bind: 164.8, divide: 146.8, convert: 130.8, grow: 196, phase: 185 };
@@ -1101,14 +1138,42 @@ const pick3 = () => Math.floor(Math.random() * 3);
 //   ph：周波数 f の正弦の位相を進める
 function ev(sr, a, d) { const na = Math.max(1, Math.round(a * sr)), k = Math.exp(-1 / (d * sr)); let i = 0, e = 1; return () => i < na ? ++i / na : (e *= k); }
 function glide(sr, from, to, d) { const k = Math.exp(-1 / (d * sr)); let e = 1; return () => to + (from - to) * (e *= k); }
-// 圧の声色：ノイズで違いを作らず、立ち上がり・音程の曲がり・倍音・脈動で六原理を分ける
+// 派手な音の部品（焼き込み用）。どれも毎サンプル一回だけ呼ぶ
+//   crackle：電気のはぜ。まばらな火花の粒が帯域フィルタを鳴らし、太いうなり（ブーン）が途切れ途切れに混ざる「ビリビリ」
+//   rumble：雷の轟き。低い雑音の大きさが、ゆっくり不規則にうねる「ゴロゴロ」
+function crackler(sr, seed, f = 3600) {
+  const tr = noiseOf(seed), bp = svf(), bp2 = svf(), w0 = TAU / sr, hold = Math.round(0.007 * sr);
+  let ph = 0, gate = 0, n = 0;
+  // うなりは鋸歯の波（倍音が多く、計算が軽い）を帯域フィルタで丸める
+  return (amt, buzzHz = 95) => {
+    let imp = 0;
+    if (tr() > 1 - 0.0035 * amt * 2) imp = tr() > 0 ? 1 : -1;
+    if (++n >= hold) { n = 0; gate = tr() > 0.1 ? 1 : 0.15; }
+    ph += buzzHz / sr; if (ph >= 1) ph -= 1;
+    return bp(imp * 9, f, 2.2, sr, 1) * 0.5 + bp2((ph * 2 - 1) * gate * 1.4, f * 0.22, 0.9, sr, 1) * 0.55;
+  };
+}
+function rumbler(sr, seed) {
+  const nz = noiseOf(seed), tr = noiseOf(seed + 7), lp = svf(), step = Math.round(0.055 * sr);
+  let cur = 0.6, target = 0.6, n = 0;
+  // pops：破片の粒（まばらな打音）を同じ低域に混ぜる
+  return (cut, pops = 0) => {
+    if (++n >= step) { n = 0; target = 0.25 + 0.75 * Math.abs(tr()); }
+    cur += (target - cur) * 0.0012;
+    const pop = pops && tr() > 1 - pops * 0.03 ? tr() * 14 : 0;
+    return lp(nz() * cur + pop, cut * 0.8, 0.75, sr) * 3.4;
+  };
+}
+// 重低音の波形：正弦に、偶数の倍音（体に響く厚み）と三倍音を多項式で足す（sin を何度も呼ばない）
+const boomWave = s => s + 0.35 * s * Math.abs(s) + 0.12 * (3 * s - 4 * s * s * s);
+// 原理ごとの声色：音程（root）と、爆ぜの明るさ（bright）・電気の量（elec）・低音の重さ（boom）
 const PRESSURE = {
-  motion:  { root: 155, bend: 2.8, attack: 0.003, decay: 0.065, overtone: 0.22, fm: 0.18, pulse: 0,    tail: 0.09 },
-  bind:    { root: 92,  bend: 1.35,attack: 0.009, decay: 0.15,  overtone: 0.12, fm: 0.06, pulse: 0,    tail: 0.2 },
-  divide:  { root: 235, bend: 2.1, attack: 0.002, decay: 0.04,  overtone: 0.28, fm: 0.32, pulse: 0,    tail: 0.055 },
-  convert: { root: 118, bend: 0.5, attack: 0.022, decay: 0.11,  overtone: 0.18, fm: 0.24, pulse: 0,    tail: 0.13 },
-  grow:    { root: 138, bend: 1.2, attack: 0.028, decay: 0.13,  overtone: 0.14, fm: 0.08, pulse: 0.07, tail: 0.18 },
-  phase:   { root: 178, bend: 1.6, attack: 0.01,  decay: 0.09,  overtone: 0.16, fm: 0.45, pulse: 0.04, tail: 0.14 }
+  motion:  { root: 155, bend: 2.8, fm: 0.18, bright: 7000, elec: 0.35, boom: 1,    tail: 0.09 },
+  bind:    { root: 92,  bend: 1.35,fm: 0.06, bright: 4200, elec: 0.15, boom: 1.25, tail: 0.2 },
+  divide:  { root: 235, bend: 2.1, fm: 0.32, bright: 7600, elec: 0.8,  boom: 0.85,  tail: 0.055 },
+  convert: { root: 118, bend: 0.5, fm: 0.24, bright: 5200, elec: 0.5,  boom: 1.1,  tail: 0.13 },
+  grow:    { root: 138, bend: 1.2, fm: 0.08, bright: 5600, elec: 0.25, boom: 1.15, tail: 0.18 },
+  phase:   { root: 178, bend: 1.6, fm: 0.45, bright: 7000, elec: 0.65, boom: 0.95,  tail: 0.14 }
 };
 // 短い一撃・重い一撃・二段の脈動。直前と同じ素材を連続で選ばない
 const soundLast = new Map();
@@ -1116,28 +1181,39 @@ function pickSound(key) {
   const last = soundLast.get(key), choices = [0, 1, 2].filter(k => k !== last);
   const k = choices[Math.floor(Math.random() * choices.length)]; soundLast.set(key, k); return k;
 }
-// エネルギーの共通素材：低中域の圧、短い芯、減衰する倍音。風の持続ノイズは重ねない
+// エネルギーの射出・命中・炸裂：鋭い破裂（パァン）→ 明るい爆ぜが暗く沈む（ドッ／ドカーン）→ 重低音の「ドン」→ 電気のはぜ（ビリビリ）。
+// 炸裂は轟きと破片の粒が尾を引く。重さは低音で作り、高い成分は短く鋭くする（シャーという持続ノイズにしない）
 function pressureBuffer(stage, a, k) {
-  const P = PRESSURE[a] || PRESSURE.motion, beam = stage === 'beam', hit = stage === 'hit' || stage === 'blast', heavy = stage === 'blast';
-  const weight = [0.78, 1.12, 0.94][k], dur = (beam ? 0.82 : heavy ? 1.05 : 0.48) + P.tail * weight;
+  const P = PRESSURE[a] || PRESSURE.motion, cast = stage === 'cast', heavy = stage === 'blast';
+  const dur = (cast ? 0.5 : heavy ? 1.55 : 0.68) * [0.9, 1.12, 1][k] + P.tail;
   return bake(`${stage}:${a}:${k}`, dur, (out, sr, n) => {
-    const w0 = TAU / sr, fo = svf(), mass = svf(), nz = noiseOf(71 + k * 37 + a.length);
-    const root = P.root * (beam ? 0.72 : hit ? 0.8 : 1) * [1.08, 0.86, 1][k];
-    const decay = (beam ? 0.2 : heavy ? 0.2 : P.decay) * weight;
-    const eB = ev(sr, P.attack, decay), eS = ev(sr, 0.006, heavy ? 0.32 : beam ? 0.22 : 0.11);
-    const eT = ev(sr, 0.007, P.tail * weight), eC = ev(sr, 0.002, hit ? 0.009 : 0.012), eN = ev(sr, 0.005, heavy ? 0.2 : 0.025);
-    const fp = glide(sr, root * P.bend * [1.15, 0.85, 1][k], root, hit ? 0.012 : beam ? 0.055 : 0.025);
-    const fs = glide(sr, heavy ? 105 : 115, heavy ? 42 : 52, 0.035), fm = glide(sr, P.fm, 0, 0.07);
-    const delay = Math.round((P.pulse || (k === 2 ? 0.045 : 0)) * sr), eP = ev(sr, 0.008, decay * 0.7);
-    let ph = 0, ps = 0, pt = 0;
+    const w0 = TAU / sr, nz = noiseOf(71 + k * 37 + a.length * 5 + (heavy ? 11 : cast ? 0 : 5)), hp = svf(), lp = svf();
+    const root = P.root * (cast ? 1 : 0.8) * [1.08, 0.86, 1][k];
+    const eCrack = ev(sr, 0.0004, cast ? 0.004 : heavy ? 0.012 : 0.007);
+    const eBody = ev(sr, 0.001, (cast ? 0.05 : heavy ? 0.32 : 0.11) * [0.85, 1.2, 1][k]);
+    const cut = glide(sr, P.bright * (heavy ? 1.1 : 1), heavy ? 160 : 260, cast ? 0.035 : heavy ? 0.16 : 0.06);
+    const eBoom = ev(sr, 0.002, (cast ? 0.1 : heavy ? 0.55 : 0.2) * P.boom), fb = glide(sr, cast ? 170 : heavy ? 110 : 135, cast ? 55 : heavy ? 30 : 42, cast ? 0.03 : 0.06);
+    const eTone = ev(sr, 0.002, cast ? 0.08 : 0.06), fp = glide(sr, root * P.bend, root, 0.02), fmI = glide(sr, P.fm + 0.6, 0.1, 0.06);
+    const fz = glide(sr, root * 18, root * 3, 0.028), eZ = ev(sr, 0.001, 0.05);
+    const zz = crackler(sr, 900 + k * 13 + a.length), eE = ev(sr, 0.003, (cast ? 0.1 : heavy ? 0.32 : 0.18) * (0.6 + P.elec));
+    const roll = rumbler(sr, 400 + k), eR = ev(sr, 0.06, 0.55), eD = ev(sr, 0.05, 0.4);
+    const fade = Math.round(0.002 * sr);
+    let pb = 0, ph = 0, pz = 0;
+    const buzzHz = a === 'divide' ? 120 : a === 'phase' ? 140 : 95, E = 1.5e-3;
+    // 消えた部品は計算しない（包絡だけ進める）
     for (let i = 0; i < n; i++) {
-      ph += w0 * fp(); ps += w0 * fs(); pt += w0 * root * 2;
-      const core = Math.sin(ph + fm() * Math.sin(ph * 2)) + P.overtone * Math.sin(ph * 2);
-      const pulse = delay && i >= delay ? Math.sin(ph * 1.5) * eP() * (k === 2 ? 0.4 : 0.22) : 0;
-      const bloom = Math.sin(pt) * eT() * (beam ? 0.18 : 0.1);
-      const snap = Math.sin(w0 * (hit ? 720 : 560) * i) * eC() * (a === 'divide' ? 0.32 : 0.16);
-      const texture = mass(nz(), heavy ? 180 : 420, 0.65, sr) * eN() * (heavy ? 0.5 : 0.08);
-      out[i] = Math.tanh(fo(core * eB() * 0.8 + (Math.sin(ps) + 0.16 * Math.sin(ps * 2)) * eS() * 0.7 + pulse + bloom + snap + texture, 2800, 0.65, sr) * 0.9);
+      const w = nz();
+      pb += w0 * fb(); ph += w0 * fp();
+      const c1 = eCrack(), c2 = eBody(), c3 = eBoom(), c4 = eTone(), c5 = eE(), c6 = eR(), c7 = eD(), cc = cut(), fi = fmI();
+      let x = 0;
+      if (c1 > E) x += hp(w, 1400, 0.7, sr, 2) * c1 * 1.3;
+      if (c2 > E) x += lp(w, cc, 0.75, sr) * c2 * (heavy ? 1.5 : 1.15);
+      if (c3 > E) x += boomWave(Math.sin(pb)) * c3 * 1.05;
+      if (c4 > E) { const s2 = Math.sin(ph * 2); x += (Math.sin(ph + fi * s2) + 0.25 * s2) * c4 * 0.32; }
+      const z1 = fz(), z2 = eZ(); if (cast && z2 > E) { pz += w0 * z1; x += Math.sin(pz) * z2 * 0.32; }
+      if (c5 > E) x += zz(1.2, buzzHz) * c5 * P.elec * 0.75;
+      if (heavy && c6 > E) x += roll(420 + c7 * 900, c7) * c6 * 0.55;
+      out[i] = Math.tanh(x * 1.55) * (i < fade ? i / fade : 1);
     }
   });
 }
@@ -1174,24 +1250,238 @@ function wardBuffer(k) {
     }
   });
 }
-// 光線：立ち上がりの圧裂、太い低音、伸びる倍音の芯。持続するノイズを使わず力の流れを作る
+// 光線：雷と大砲を混ぜた轟音。陣が鳴る短い「キィン」→ 大砲の破裂と重低音「ドォン」→
+// 雷の轟き「ゴロゴロ」が光線の間うねり続け、電気のはぜ「バリバリ」が重なり、力の芯が唸る → 遠ざかる轟きで消える
 function beamBuffer(a, k) {
   const P = PRESSURE[a] || PRESSURE.divide;
-  return bake(`beam:${a}:${k}`, [1.05, 1.2, 1.12][k] + P.tail, (out, sr, n) => {
-    const w0 = TAU / sr, fo = svf(), root = P.root * 0.85 * [1.08, 0.9, 1][k];
-    const eBurst = ev(sr, 0.002, 0.038), eLow = ev(sr, 0.005, [0.22, 0.29, 0.25][k]);
-    const fp = glide(sr, root * 1.9, root, 0.055), fs = glide(sr, 115, 43, 0.045), fb = glide(sr, 740, 170, 0.018);
-    const cut = glide(sr, 3200, 1500, 0.17), index = glide(sr, 0.65 + P.fm, 0.18, 0.18);
-    const attack = Math.round(0.01 * sr), hold = Math.round([0.19, 0.27, 0.23][k] * sr), kd = Math.exp(-1 / (0.17 * sr));
-    let ph = 0, ps = 0, pb = 0, env = 0;
+  return bake(`beam:${a}:${k}`, [1.9, 2.15, 2.0][k] + P.tail + 0.6, (out, sr, n) => {
+    const w0 = TAU / sr, nz = noiseOf(311 + k * 17 + a.length), hp = svf(), lp = svf(), fc = svf(), E = 1.5e-3;
+    const root = P.root * 1.05 * [1.06, 0.9, 1][k], T0 = Math.round(0.05 * sr), fade = Math.round(0.002 * sr);
+    const fw = glide(sr, 1900 * [1, 0.9, 1.1][k], 4300, 0.04);
+    // 大砲：破裂・明るい爆ぜ・沈む重低音
+    const eCrack = ev(sr, 0.0004, 0.014), eBody = ev(sr, 0.001, 0.2), cut = glide(sr, 11000, 520, 0.12);
+    const eBoom = ev(sr, 0.002, 0.6), fb = glide(sr, 190, 50, 0.08);
+    // 雷：うねる轟きと、少し遅れて来る二度目の裂け目
+    const roll = rumbler(sr, 77 + k), cutR = glide(sr, 2600, 540, 0.6), T2 = Math.round([0.17, 0.24, 0.2][k] * sr), eC2 = ev(sr, 0.001, 0.03);
+    // 電気と力の芯：光線が出ている間だけ強い
+    const zz = crackler(sr, 600 + k * 9 + a.length, 4200), hold = Math.round([0.42, 0.55, 0.48][k] * sr), kd = Math.exp(-1 / (0.18 * sr)), kr = Math.exp(-1 / (0.75 * sr));
+    const fp = glide(sr, root * 2.4, root, 0.06), index = glide(sr, 1.4 + P.fm, 0.35, 0.25);
+    const fz = glide(sr, 3400, 380, 0.05), eZ = ev(sr, 0.001, 0.09);
+    const buzz = [38, 31, 44][k] * (a === 'phase' ? 1.4 : a === 'bind' ? 0.75 : 1);
+    let pw = 0, pb = 0, ph = 0, pz = 0, env = 0, envR = 0;
     for (let i = 0; i < n; i++) {
-      ph += w0 * fp(); ps += w0 * fs(); pb += w0 * fb();
-      env = i < attack ? i / attack : i < hold ? 1 : env * kd;
-      const drive = Math.sin(ph + index() * Math.sin(ph * 2)) + 0.3 * Math.sin(ph * 2) + 0.14 * Math.sin(ph * 3);
-      const flow = 0.92 + 0.08 * Math.sin(w0 * (a === 'phase' ? 11 : 5) * i);
-      const burst = (Math.sin(pb) + 0.25 * Math.sin(pb * 2)) * eBurst() * 0.65;
-      const low = (Math.sin(ps) + 0.18 * Math.sin(ps * 2)) * eLow() * 0.95;
-      out[i] = Math.tanh(fo(drive * env * flow * 0.66 + low + burst, cut(), 0.65, sr) * 0.95);
+      let x = 0;
+      if (i < T0 + 200) { pw += w0 * fw(); const e = Math.min(1, i / T0) * (i > T0 ? 1 - (i - T0) / 200 : 1); x += Math.sin(pw) * e * 0.2; }
+      if (i >= T0) {
+        const j = i - T0, w = nz();
+        pb += w0 * fb(); ph += w0 * fp(); pz += w0 * fz();
+        env = j < hold ? Math.min(1, j / (0.008 * sr)) : env * kd;
+        envR = j < hold ? Math.min(1, j / (0.05 * sr)) : envR * kr;
+        const c1 = eCrack(), c2 = eBody(), c3 = eBoom(), cc = cut(), cr = cutR(), ix = index(), z2 = eZ();
+        if (c1 > E) x += hp(w, 1300, 0.7, sr, 2) * c1 * 1.5;
+        if (c2 > E) x += lp(w, cc, 0.75, sr) * c2 * 1.5;
+        if (c3 > E) x += boomWave(Math.sin(pb)) * c3 * 1.15;
+        if (envR > E) x += roll(cr) * envR * 0.85;
+        if (j >= T2) { const c4 = eC2(); if (c4 > E) x += fc(w, 2600, 0.8, sr, 1) * c4 * 1.2; }
+        if (env > 0.02) x += zz(env * 1.6 + 0.15, 100 + buzz) * (0.25 + env * 0.75) * Math.max(0.55, P.elec) * 0.6;
+        if (env > E) { const s1 = Math.sin(ph), s2 = Math.sin(ph * 2); x += (Math.sin(ph + ix * s2) + 0.38 * s2 + 0.2 * (3 * s1 - 4 * s1 * s1 * s1)) * env * (0.72 + 0.28 * Math.sin(w0 * buzz * j)) * 0.4; }
+        if (z2 > E) x += Math.sin(pz) * z2 * 0.35;
+      }
+      out[i] = Math.tanh(x * 1.5) * (i < fade ? i / fade : 1);
+    }
+    // やまびこ：少し暗くなった響きが三度返ってくる（石の広間の残響とは別に、光線だけに）
+    const dry = Float32Array.from(out);
+    for (const [t, g] of [[0.17, 0.42], [0.34, 0.25], [0.53, 0.14]]) {
+      const d = Math.round(t * sr); let y = 0;
+      for (let i = d; i < n; i++) { y += (dry[i - d] - y) * 0.5; out[i] += y * g; }
+    }
+  });
+}
+// 電気が走る：鋭い「パチッ」から、はぜる火花とうなりが途切れ途切れに続く「ビリビリッ」
+function zapBuffer(k) {
+  return bake(`zap:${k}`, [0.38, 0.5, 0.44][k], (out, sr, n) => {
+    const zz = crackler(sr, 1200 + k * 31, [3800, 3200, 4400][k]), w0 = TAU / sr, eE = ev(sr, 0.002, [0.12, 0.18, 0.15][k]), fz = glide(sr, 2600, 300, 0.04), eZ = ev(sr, 0.001, 0.05), fb = glide(sr, 140, 60, 0.04), eB = ev(sr, 0.002, 0.08), fade = Math.round(0.002 * sr);
+    let pz = 0, pb = 0;
+    for (let i = 0; i < n; i++) {
+      pz += w0 * fz(); pb += w0 * fb();
+      const x = zz(2.4, [100, 120, 85][k]) * eE() * 0.9 + Math.sin(pz) * eZ() * 0.35 + Math.sin(pb) * eB() * 0.8;
+      out[i] = Math.tanh(x * 1.4) * (i < fade ? i / fade : 1);
+    }
+  });
+}
+// 崩れる構造の響き：ガラスの欠片がほどけていく。高い澄んだ粒が、少しずつ低く小さくなりながら降り続け、最後は何も残らない。
+// 撃破（体が魔素に戻る）・エネルギーの壁や結界が砕ける・場が散る、に使う。美しさは崩壊の副産物なので、祝う和音にはしない
+//   kind 0：撃破（低い沈みと長い粒の降り）／1：砕ける（鋭い裂け目と密な粒）／2：散る（小さく短い）
+function dissolveBuffer(kind, k) {
+  const dur = [1.9, 1.3, 0.8][kind] + k * 0.08;
+  return bake(`dissolve:${kind}:${k}`, dur, (out, sr, n) => {
+    const w0 = TAU / sr, tr = noiseOf(1300 + kind * 101 + k * 17), nz = noiseOf(1400 + kind * 7 + k), hp = svf(), fade = Math.round(0.002 * sr);
+    const count = [16, 26, 8][kind], span = [1.3, 0.75, 0.5][kind], top = [3400, 4600, 3000][kind] * (1 + k * 0.05);
+    // 粒：時刻・高さ・減衰を種つきで決める。あとの粒ほど低く小さい（崩れて静かになっていく）
+    const grains = [];
+    for (let j = 0; j < count; j++) {
+      const q = j / count, at = Math.round((Math.pow(q, 1.4) * span + Math.abs(tr()) * 0.03 + (kind === 1 ? 0.004 : 0.02)) * sr);
+      const f = top * (1 - q * 0.55) * (0.8 + 0.4 * Math.abs(tr()));
+      grains.push({ at, w: w0 * f, k: Math.exp(-1 / ((0.04 + Math.abs(tr()) * 0.09) * sr)), g: (1 - q * 0.7) * 0.32, e: 0, p: 0 });
+    }
+    const eCrack = ev(sr, 0.0005, kind === 1 ? 0.01 : kind === 0 ? 0.006 : 0.002), eLow = ev(sr, 0.004, [0.6, 0.25, 0.12][kind]), fl = glide(sr, [90, 120, 140][kind], [24, 45, 60][kind], 0.15);
+    // 鳴っている粒だけを回す（時刻順に並べて、次に鳴る粒を指で追う）
+    grains.sort((p, q) => p.at - q.at);
+    const live = [];
+    let pl = 0, next = 0;
+    for (let i = 0; i < n; i++) {
+      let x = 0;
+      while (next < grains.length && grains[next].at <= i) { grains[next].e = 1; live.push(grains[next++]); }
+      const c = eCrack(); if (c > 1e-3) x += hp(nz(), 1800, 0.7, sr, 2) * c * [0.8, 1.4, 0.3][kind];
+      pl += w0 * fl(); const lo = eLow(); if (lo > 1e-3) x += boomWave(Math.sin(pl)) * lo * [0.8, 0.5, 0.25][kind];
+      for (let j = live.length - 1; j >= 0; j--) { const g = live[j]; g.p += g.w; x += (Math.sin(g.p) + 0.3 * Math.sin(g.p * 2.76)) * g.e * g.g; g.e *= g.k; if (g.e < 2e-3) live.splice(j, 1); }
+      out[i] = Math.tanh(x * 1.3) * (i < fade ? i / fade : 1);
+    }
+  });
+}
+// 落雷：空が割れる裂け目と、地を打つ重低音、長くうねって遠ざかる轟き。このあと世界は黙る（duck）
+function strikeBuffer(k) {
+  return bake(`strike:${k}`, 3.2, (out, sr, n) => {
+    const w0 = TAU / sr, nz = noiseOf(1500 + k), hp = svf(), lp = svf(), fade = Math.round(0.002 * sr);
+    const eCrack = ev(sr, 0.0004, 0.02), eBody = ev(sr, 0.001, 0.3), cut = glide(sr, 9000, 300, 0.2), eBoom = ev(sr, 0.003, 0.9), fb = glide(sr, 80, 22, 0.15);
+    const roll = rumbler(sr, 1600 + k), eR = ev(sr, 0.12, 1.1), T2 = Math.round(0.11 * sr), eC2 = ev(sr, 0.001, 0.025), fc = svf();
+    let pb = 0;
+    for (let i = 0; i < n; i++) {
+      const w = nz(); let x = 0;
+      const c1 = eCrack(), c2 = eBody(), c3 = eBoom(), cc = cut(), r = eR();
+      if (c1 > 1e-3) x += hp(w, 1200, 0.7, sr, 2) * c1 * 1.6;
+      if (c2 > 1e-3) x += lp(w, cc, 0.75, sr) * c2 * 1.6;
+      pb += w0 * fb(); if (c3 > 1e-3) x += boomWave(Math.sin(pb)) * c3 * 1.2;
+      if (r > 1e-3) x += roll(380) * r * 0.9;
+      if (i >= T2) { const c4 = eC2(); if (c4 > 1e-3) x += fc(w, 1500, 0.8, sr, 1) * c4 * 1.3; }
+      out[i] = Math.tanh(x * 1.5) * (i < fade ? i / fade : 1);
+    }
+  });
+}
+// 無音：理不尽は音量ではなく、静けさで表す。撃破・落雷の一瞬あとに、効果音も音楽もすっと引いて「間」ができ、ゆっくり戻る
+let duckUntil = 0;
+function duck(delay = 0.1, hold = 0.55, release = 0.9, depth = 0.12) {
+  if (!audio.ctx || !audio.master) return;
+  const t = audio.ctx.currentTime, g = audio.master.gain, base = 0.95 * profile.sfxVol;
+  if (t + delay < duckUntil) return;
+  duckUntil = t + delay + hold;
+  g.cancelScheduledValues(t);
+  g.setValueAtTime(g.value, t);
+  g.setTargetAtTime(base * depth, t + delay, 0.025);
+  g.setTargetAtTime(base, t + delay + hold, release / 3);
+  bgmDuck = { at: clock + delay, until: clock + delay + hold, release };
+}
+let bgmDuck = null;
+function bgmDuckMul() {
+  if (!bgmDuck) return 1;
+  if (clock < bgmDuck.at) return 1;
+  if (clock < bgmDuck.until) return 0.15;
+  const r = (clock - bgmDuck.until) / bgmDuck.release;
+  if (r >= 1) { bgmDuck = null; return 1; }
+  return 0.15 + 0.85 * r;
+}
+// 段の連鎖：魔力が次の段へ流れ込む。上へ滑る澄んだ一音と、柔らかい圧（金属音にしない）
+function linkBuffer(k) {
+  return bake(`link:${k}`, 0.5, (out, sr, n) => {
+    const w0 = TAU / sr, fo = svf(), f0 = [520, 466, 588][k], fp = glide(sr, f0 * 0.6, f0, 0.03), eT = ev(sr, 0.004, 0.13), eP = ev(sr, 0.003, 0.06), fs = glide(sr, 150, 70, 0.03);
+    let ph = 0, ps = 0;
+    for (let i = 0; i < n; i++) {
+      ph += w0 * fp(); ps += w0 * fs();
+      out[i] = Math.tanh(fo(Math.sin(ph + 0.3 * Math.sin(ph * 2)) * eT() * 0.5 + Math.sin(ps) * eP() * 0.7, 3600, 0.7, sr));
+    }
+  });
+}
+// 器ごとの音：同じ原理でも、器が違えば音の形が違う。原理は音程と色づけ（PRESSURE と ACCENT）で分ける。
+// 変種は一つだけ焼き、再生速度のゆらぎで毎回少し違う音にする（素材の数を増やさない）
+// 原理ごとの色づけ：明るさの基準（f：ガラス・金属の高さ）と、回転・うねりの速さ（spin）
+const ACCENT = {
+  motion:  { f: 1250, metal: 380, spin: 1.3 },
+  bind:    { f: 880,  metal: 260, spin: 0.75 },
+  divide:  { f: 1520, metal: 450, spin: 1.15 },
+  convert: { f: 1040, metal: 310, spin: 0.9 },
+  grow:    { f: 990,  metal: 300, spin: 0.85 },
+  phase:   { f: 1180, metal: 350, spin: 1.05 }
+};
+// 円の場が開く：低い「ヴォン」と膨らむ圧、空間が満ちる倍音のうねり。原理で高さとうねりの速さが変わる
+function domainBuffer(a) {
+  const P = PRESSURE[a] || PRESSURE.motion, A = ACCENT[a] || ACCENT.motion;
+  return bake(`domain:${a}`, 1.4, (out, sr, n) => {
+    const w0 = TAU / sr, fo = svf(), root = P.root * 0.4, eS = ev(sr, 0.01, 0.45), eH = ev(sr, 0.08, 0.5), cut = glide(sr, 300, 2400, 0.25), fp = glide(sr, root * 2, root, 0.08);
+    const zz = crackler(sr, 77 + a.length), eE = ev(sr, 0.02, 0.35), beat = a === 'phase' ? 1.012 : 1.004;
+    let ps = 0, ph = 0, ph2 = 0;
+    for (let i = 0; i < n; i++) {
+      ps += w0 * fp(); ph += w0 * root * 4; ph2 += w0 * root * 4 * beat;
+      const swell = (Math.sin(ph) + 0.5 * Math.sin(ph2 * 1.5 + 0.3) + 0.3 * Math.sin(ph * 2.01)) * eH() * (0.7 + 0.3 * Math.sin(w0 * 7 * A.spin * i));
+      const e = eE(), elec = P.elec > 0.5 && e > 1e-3 ? zz(0.8, 90) * e * (P.elec - 0.4) : 0;
+      out[i] = Math.tanh(fo(swell * 0.5 + elec, cut(), 0.7, sr) + boomWave(Math.sin(ps)) * eS() * 0.9);
+    }
+  });
+}
+// 面の壁が立つ：エネルギーはガラス（割り切れない比の澄んだ部分音が重なってうなり、結晶が組み上がる「シャリン」と小さな粒の鳴り）、
+// 固体は金属の板（打った「カァン」と、低いものほど長く残る部分音、重い足元の音）。破裂音は使わない
+function wallBuffer(matter, a) {
+  const A = ACCENT[a] || ACCENT.motion, solid = matter === 'solid';
+  return bake(`wall:${solid ? 's' : 'e'}:${a}`, solid ? 1.7 : 1.5, (out, sr, n) => {
+    const w0 = TAU / sr, nz = noiseOf(500 + a.length * 7 + (solid ? 3 : 0)), bp = svf(), lpT = svf(), fade = Math.round(0.002 * sr);
+    const ratios = solid ? [1, 1.47, 2.09, 2.56, 3.39, 4.1] : [1, 2.76, 5.4, 8.93], f0 = solid ? A.metal : A.f;
+    const modes = ratios.map((m, j) => ({ w: w0 * f0 * m, w2: w0 * f0 * m * (1 + (solid ? 0.0025 : 0.006) * (j + 1)), e: ev(sr, 0.0008 + j * 0.0004, (solid ? 1.3 : 1.1) / (1 + j * (solid ? 0.55 : 0.85))), g: 1 / (1 + j * (solid ? 0.7 : 1.3)), p: 0, p2: 0 }));
+    const eHit = ev(sr, 0.0005, solid ? 0.012 : 0.006), eSh = ev(sr, 0.01, 0.09), fsh = glide(sr, solid ? 1800 : 2600, solid ? 4200 : 7200, 0.06);
+    const eLow = ev(sr, 0.002, solid ? 0.22 : 0.12), fl = glide(sr, solid ? 130 : 180, solid ? 55 : 80, 0.05);
+    // 小さな粒の鳴り（ガラスだけ）：決まった時刻に高い一音が四つ
+    const tinks = solid ? [] : [0.05, 0.11, 0.16, 0.24].map((t, j) => ({ at: Math.round(t * sr), w: w0 * f0 * (2.2 + j * 0.7), k: Math.exp(-1 / (0.05 * sr)), e: 0, p: 0 }));
+    let pl = 0;
+    for (let i = 0; i < n; i++) {
+      const w = nz();
+      let x = 0;
+      // うなり（少しずれた二つ目の音）は低い二つの部分音だけに付ける
+      for (let j = 0; j < modes.length; j++) { const q = modes[j], e = q.e(); if (e > 1e-3) { q.p += q.w; if (j < 2) { q.p2 += q.w2; x += (Math.sin(q.p) + Math.sin(q.p2)) * 0.5 * e * q.g; } else x += Math.sin(q.p) * e * q.g; } }
+      const h = eHit(); if (h > 1e-3) x += bp(w, solid ? 2600 : 5200, 1.2, sr, 1) * h * (solid ? 2.2 : 1.2);
+      const sh = eSh(), fs = fsh(); if (sh > 1e-3) x += lpT(w, fs, 4, sr, 1) * sh * (solid ? 0.25 : 0.35);
+      const lo = eLow(); pl += w0 * fl(); if (lo > 1e-3) x += boomWave(Math.sin(pl)) * lo * (solid ? 0.9 : 0.45);
+      for (const t of tinks) { if (i === t.at) t.e = 1; if (t.e > 1e-3) { t.p += t.w; x += Math.sin(t.p) * t.e * 0.22; t.e *= t.k; } }
+      out[i] = Math.tanh(x * 1.2) * (i < fade ? i / fade : 1);
+    }
+  });
+}
+// 纏：体に魔力が燃え移る「ゴォッ」。立ち上がる炎の息と、せり上がる声、足元の低いうねり。原理の色づけを一つだけ
+//   動＝鋭く速い・結＝低く重い唸り・分＝電気のはぜ・換＝下がっていく声・増＝五度の和音・相＝うなる二つの声
+function bodyBuffer(a) {
+  const P = PRESSURE[a] || PRESSURE.motion;
+  return bake(`body:${a}`, 1.0, (out, sr, n) => {
+    const w0 = TAU / sr, nz = noiseOf(800 + a.length * 3), bp = svf(), fade = Math.round(0.002 * sr), fast = a === 'motion';
+    const eW = ev(sr, fast ? 0.03 : 0.08, fast ? 0.2 : 0.32), cut = glide(sr, 260, fast ? 3600 : 2400, fast ? 0.1 : 0.2);
+    const root = P.root * (a === 'bind' ? 0.75 : 1), fp = a === 'convert' ? glide(sr, root * 2.2, root, 0.25) : glide(sr, root, root * 2, 0.22);
+    const eT = ev(sr, 0.05, 0.38), eS = ev(sr, 0.04, 0.35), zz = crackler(sr, 66), eE = ev(sr, 0.02, 0.3);
+    const second = a === 'grow' ? 1.5 : a === 'phase' ? 1.018 : a === 'bind' ? 0.5 : 0;
+    let ph = 0, ph2 = 0, ps = 0;
+    for (let i = 0; i < n; i++) {
+      const f = fp(); ph += w0 * f; ph2 += w0 * f * (second || 1); ps += w0 * 55;
+      const t = eT();
+      let x = bp(nz(), cut(), 1.1, sr, 1) * eW() * 1.1;
+      x += (Math.sin(ph) + 0.3 * Math.sin(ph * 2)) * t * 0.42;
+      if (second) x += Math.sin(ph2) * t * 0.3;
+      x += Math.sin(ps) * eS() * 0.6;
+      const e = eE(); if (a === 'divide' && e > 1e-3) x += zz(1.6, 110) * e * 0.6;
+      out[i] = Math.tanh(x * 1.3) * (i < fade ? i / fade : 1);
+    }
+  });
+}
+// 環：刃や光が術者のまわりを回り始める「ヒュンヒュンヒュン」。回る速さが上がっていき、
+// 固体は刃の「シャキン」と金属の鳴り、エネルギーは回転に合わせて脈打つ唸り
+function orbitBuffer(matter, a) {
+  const P = PRESSURE[a] || PRESSURE.motion, A = ACCENT[a] || ACCENT.motion, solid = matter === 'solid';
+  return bake(`orbit:${solid ? 's' : 'e'}:${a}`, 1.1, (out, sr, n) => {
+    const w0 = TAU / sr, nz = noiseOf(900 + a.length), bp = svf(), fade = Math.round(0.002 * sr);
+    const rate = glide(sr, 3.5 * A.spin, 11 * A.spin, 0.35), eA = ev(sr, 0.03, 0.55), center = solid ? 1900 : 1000;
+    const eR = ev(sr, 0.001, 0.45), q1 = w0 * A.metal * 3.1, q2 = q1 * 2.76;
+    let pr = 0, ph = 0, p1 = 0, p2 = 0;
+    for (let i = 0; i < n; i++) {
+      pr += w0 * rate(); ph += w0 * P.root;
+      const pulse = Math.max(0, Math.sin(pr)), whirl = pulse * pulse, env = eA();
+      let x = bp(nz(), center * (0.8 + 0.4 * whirl), 2, sr, 1) * whirl * env * 1.3;
+      if (solid) { const r = eR(); if (r > 1e-3) { p1 += q1; p2 += q2; x += (Math.sin(p1) + 0.35 * Math.sin(p2)) * r * 0.35; } }
+      else { eR(); x += (Math.sin(ph) + 0.3 * Math.sin(ph * 2)) * (0.45 + 0.55 * whirl) * env * 0.45; }
+      out[i] = Math.tanh(x * 1.3) * (i < fade ? i / fade : 1);
     }
   });
 }
@@ -1276,8 +1566,13 @@ function playTexture(material, stage, v, rate = 1, delay = 0) { playBaked(textur
 // 術の音：質（固体／エネルギー）と1段目の主な原理で素材を選ぶ。副原理は余韻の高さを少し動かす
 function materialSound(r, v, impact = false, heavy = v > 0.8) {
   const solid = materialOf(r) === 'metal', a = r.a || 'motion', tilt = r.b && ROOT[r.b] ? 0.97 + (ROOT[r.b] / (ROOT[a] || 180)) * 0.03 : 1;
-  if (impact) playBaked(solid ? solidHitBuffer(heavy, pickSound('solidHit')) : hitBuffer(a, heavy, pickSound('hit:' + a)), v * (heavy ? 0.85 : 0.6), vary(tilt, 0.04));
-  else playBaked(solid ? solidCastBuffer(pickSound('solidCast')) : castBuffer(a, pickSound('cast:' + a)), v * 0.62, vary(tilt, 0.035));
+  if (impact) {
+    playBaked(solid ? solidHitBuffer(heavy, pickSound('solidHit')) : hitBuffer(a, heavy, pickSound('hit:' + a)), v * (heavy ? 1 : 0.72), vary(tilt, 0.04));
+    // 術の構造が崩れて魔素に戻る瞬間の、かすかな澄んだ粒（美しさは崩壊の副産物）
+    if (!solid) playBaked(dissolveBuffer(2, pickSound('shimmer')), v * (heavy ? 0.22 : 0.12), vary(tilt * 1.1, 0.06), heavy ? 0.12 : 0.05);
+  }
+  // 軌道で高さを変える：放物は低く重く、追尾は高く鋭く
+  else playBaked(solid ? solidCastBuffer(pickSound('solidCast')) : castBuffer(a, pickSound('cast:' + a)), v * 0.72, vary(tilt * (r.beh === 'lob' ? 0.84 : r.beh === 'homing' ? 1.16 : 1), 0.035));
 }
 // 最初の一発で計算が詰まらないように、音を出せるようになったら1フレームに1つずつ素材を作っておく
 const warmList = [];
@@ -1286,7 +1581,9 @@ function queueWarm() {
   for (const a of D.principleOrder) for (let k = 0; k < 3; k++) warmList.push(() => castBuffer(a, k), () => hitBuffer(a, false, k));
   for (let k = 0; k < 3; k++) warmList.push(() => solidCastBuffer(k), () => solidHitBuffer(false, k), () => solidHitBuffer(true, k), () => hurtBuffer(k));
   for (const a of D.principleOrder) for (let k = 0; k < 3; k++) warmList.push(() => beamBuffer(a, k), () => hitBuffer(a, true, k));
-  for (let k = 0; k < 3; k++) warmList.push(() => wardBuffer(k));
+  for (let k = 0; k < 3; k++) warmList.push(() => wardBuffer(k), () => linkBuffer(k), () => zapBuffer(k));
+  for (let k = 0; k < 3; k++) warmList.push(() => dissolveBuffer(0, k), () => dissolveBuffer(1, k), () => dissolveBuffer(2, k), () => strikeBuffer(k));
+  for (const a of D.principleOrder) warmList.push(() => domainBuffer(a), () => wallBuffer('energy', a), () => wallBuffer('solid', a), () => bodyBuffer(a), () => orbitBuffer('energy', a), () => orbitBuffer('solid', a));
   warmList.push(glintBuffer, () => flightBuffer('orb'), () => flightBuffer('arc'), () => flightBuffer('metal'));
 }
 function warmAudio() { if (audio.ctx && warmList.length) warmList.shift()(); }
@@ -1337,39 +1634,56 @@ function sfxAt(name, vol, arg, x) { if (vol > 0.01) withPan(x, () => sfx(name, v
 function sfx(name, vol = 1, arg) {
   if (!audio.ctx || !profile.sfx || audio.ctx.state !== 'running') return;
   const now = audio.ctx.currentTime;
-  const gap = { cast: 0.04, hit: 0.035, pickup: 0.045, hurt: 0.07, thud: 0.08, absorb: 0.06, reflect: 0.06, blast: 0.07, shatter: 0.06, defeat: 0.3, clang: 0.05, pierce: 0.05, strip: 0.06, beam: 0.05 }[name] || 0;
+  const gap = { cast: 0.04, hit: 0.035, pickup: 0.045, hurt: 0.07, thud: 0.08, absorb: 0.06, reflect: 0.06, blast: 0.07, shatter: 0.06, glassBreak: 0.08, dissolve: 0.1, link: 0.06, domain: 0.1, zap: 0.05, wallUp: 0.08, body: 0.1, orbit: 0.1, defeat: 0.3, clang: 0.05, pierce: 0.05, strip: 0.06, beam: 0.05 }[name] || 0;
   if (gap && now - (audio.last[name] || 0) < gap) return;
   audio.last[name] = now;
   const v = vol;
   const recipe = d => typeof arg === 'object' && arg ? arg : { a: arg || d };
   switch (name) {
     case 'cast': materialSound(recipe('motion'), v); break;
-    case 'beam': { const r = recipe('divide'); playBaked(beamBuffer(PRESSURE[r.a] ? r.a : 'divide', pickSound('beam:' + r.a)), v * 0.72, vary(1, 0.03)); break; }
+    case 'beam': { const r = recipe('divide'); playBaked(beamBuffer(PRESSURE[r.a] ? r.a : 'divide', pickSound('beam:' + r.a)), v, vary(1, 0.03)); break; }
     case 'hit': materialSound(recipe('motion'), v * 0.8, true, false); break;
     case 'blast': materialSound(recipe('motion'), v, true, true); break;
     // 被弾：鈍い。低い「ドッ」と、こもった息の詰まる音。高い音は鳴らさない（毎回少し違う）
     case 'hurt': playBaked(hurtBuffer(pick3()), 0.62 * v, vary(1, 0.06)); break;
     case 'thud': thump(85, 38, 0.35, 0.18 * v); break;
     case 'ward': playBaked(wardBuffer(pickSound('ward')), 0.62 * v, vary(1, 0.025)); break;
+    // 段の連鎖：魔力が次の段へ流れ込む一音
+    case 'link': playBaked(linkBuffer(pickSound('link')), 0.34 * v, vary(1, 0.03)); break;
+    // 円の場が開く：空間が満ちる低いうねり
+    case 'domain': playBaked(domainBuffer(recipe('motion').a), 0.55 * v, vary(1, 0.04)); break;
+    // 面の壁：エネルギーはガラス、固体は金属
+    case 'wallUp': { const r = recipe('bind'); playBaked(wallBuffer(r.matter, PRESSURE[r.a] ? r.a : 'bind'), 0.6 * v, vary(1, 0.05)); break; }
+    // 纏：体に魔力が燃え移る
+    case 'body': playBaked(bodyBuffer(PRESSURE[arg] ? arg : 'grow'), 0.6 * v, vary(1, 0.05)); break;
+    // 環：回り始める刃・光
+    case 'orbit': { const r = recipe('motion'); playBaked(orbitBuffer(r.matter, PRESSURE[r.a] ? r.a : 'motion'), 0.55 * v, vary(1, 0.05)); break; }
     case 'shatter': playBaked(solidHitBuffer(true, pickSound('shatter')), 0.42 * v, vary(0.85, 0.035)); break;
     case 'absorb': playBaked(castBuffer('convert', pickSound('absorb')), 0.28 * v, 1.15); break;
     // 固体どうしがぶつかる金属音（不協和な倍音）
     case 'clang': playBaked(solidHitBuffer(false, pickSound('clang')), 0.4 * v, vary(1.25, 0.035)); break;
     // エネルギーが固体を貫く：短く抜ける芯
-    case 'pierce': playBaked(castBuffer('divide', pickSound('pierce')), 0.32 * v, vary(1.3, 0.035)); break;
+    case 'pierce': playBaked(zapBuffer(pickSound('zap')), 0.42 * v, vary(1.1, 0.04)); break;
+    // 電気が走る：ビリビリとはぜる
+    case 'zap': playBaked(zapBuffer(pickSound('zap')), 0.4 * v, vary(1, 0.05)); break;
     // 固体がエネルギーの膜を剥がす：短く沈む圧
     case 'strip': playBaked(hitBuffer('phase', false, pickSound('strip')), 0.4 * v, vary(0.85, 0.035)); break;
     // 遠雷：長く低いうなり
     case 'thunder': rumble(3.2, 0.3 * v, 420); sub(50, 24, 2.2, 0.36 * v, 0.1); break;
     case 'reflect': playBaked(castBuffer('phase', pickSound('reflect')), 0.32 * v, 1.1); break;
     case 'buff': playBaked(castBuffer('grow', pickSound('buff')), 0.35 * v); break;
-    case 'misfire': osc('sawtooth', 180, 40, 0.5, 0.16, { dest: audio.shaper }); hiss('lowpass', 1500, 200, 0.8, 0.6, 0.3); thump(90, 30, 0.6, 0.4); crackle(0.5, 0.08, 8); break;
+    case 'misfire': playBaked(hitBuffer('divide', true, pickSound('misfire')), 0.9 * v, 0.8); playBaked(zapBuffer(pickSound('zap')), 0.4 * v, 0.9); break;
     case 'sever': playBaked(hitBuffer('divide', false, pickSound('sever')), 0.25 * v, 1.25); break;
     case 'detonate': osc('triangle', 220, 90, 0.08, 0.1); osc('sine', 1100, 1100, 0.05, 0.035, { at: 0.06 }); break;
     case 'recall': [12, 7, 0].forEach((n, i) => osc('sine', 660 * Math.pow(2, n / 12), 660 * Math.pow(2, n / 12), 0.35, 0.04, { at: i * 0.06 })); break;
     case 'dodge': playBaked(castBuffer('motion', pickSound('dodge')), 0.22 * v, 1.2); break;
     case 'select': osc('sine', 1100 + (arg || 0) * 150, 1100 + (arg || 0) * 150, 0.07, 0.03); osc('sine', 2200 + (arg || 0) * 300, 2200, 0.04, 0.012); break;
-    case 'kill': sub(64, 24, 1.1, 0.46 * v); hiss('lowpass', 1600, 80, 0.8, 0.8, 0.2 * v, { attack: 0.004 }); break;
+    // 散らした者への音は小さな鈍い手応えだけ（勝っても祝わない）
+    case 'kill': thump(72, 30, 0.45, 0.28 * v); break;
+    // エネルギーの壁・結界が砕ける：鋭い裂け目と、密に降るガラスの粒
+    case 'glassBreak': playBaked(dissolveBuffer(1, pickSound('glassBreak')), 0.6 * v, vary(1, 0.05)); break;
+    // 場や術が散る：小さく短い粒の降り
+    case 'dissolve': playBaked(dissolveBuffer(2, pickSound('dissolve')), 0.35 * v, vary(1, 0.06)); break;
     // 魔素を拾う：小さな澄んだ一音。続けて拾うと五音音階で上がる
     case 'pickup': { const n = PENTA[Math.min(PENTA.length - 1, Math.floor((arg || 0) / 2))] - 5; playBaked(glintBuffer(), 0.3 * v, Math.pow(2, n / 12) * vary(1, 0.006)); break; }
     case 'level': playBaked(castBuffer('grow', pickSound('level')), 0.42 * v, 0.85); break;
@@ -1378,7 +1692,7 @@ function sfx(name, vol = 1, arg) {
     case 'down': hiss('lowpass', 700, 100, 0.6, 0.8, 0.1); thump(65, 25, 0.5, 0.2); break;
     // 落雷：予告の和音が上がり、白い雷が落ち、遠くへ轟く
     case 'strikeWarn': [0, 7, 12].forEach((n, i) => osc('sine', 880 * Math.pow(2, n / 12), 892 * Math.pow(2, n / 12), 0.5, 0.04 * v, { at: i * 0.18, attack: 0.02 }));  break;
-    case 'strike': skyCrack(1.1 * v); break;
+    case 'strike': playBaked(strikeBuffer(pickSound('strike')), 1.0 * v, vary(1, 0.03)); break;
     // 演算の間：低い唸りの上を、機械の音が降りていく
     case 'bossCall': osc('sawtooth', 55, 40, 2.6, 0.1, { attack: 0.6, dest: audio.shaper }); sub(48, 22, 2.4, 0.5); darkChord(55, 1.4, 2.4); [0, 3, 6, 10, 13].forEach((n, i) => osc('square', 1320 * Math.pow(2, -n / 12), 1300 * Math.pow(2, -n / 12), 0.09, 0.03, { at: 0.3 + i * 0.07 })); hiss('lowpass', 500, 180, 0.7, 1.2, 0.025, { attack: 0.4 }); break;
     case 'bossLearn': [0, 4, 7].forEach((n, i) => osc('sine', 330 * Math.pow(2, n / 12), 300 * Math.pow(2, n / 12), 0.09, 0.025 * v, { at: i * 0.07, attack: 0.006 })); break;
@@ -1410,6 +1724,14 @@ function chantPad(id, a, dur, vol) {
 
 }
 
+// 光線の溜め：陣に力が集まって上がっていく細い「キィィン」。放つ瞬間に切れる
+function chargeWhine(dur, vol) {
+  if (!audio.ctx || !profile.sfx || audio.ctx.state !== 'running' || dur < 0.2) return;
+  const ac = audio.ctx, t = ac.currentTime, end = t + dur, o = ac.createOscillator(), g = ac.createGain();
+  o.type = 'sine'; o.frequency.setValueAtTime(420, t); o.frequency.exponentialRampToValueAtTime(1900, end);
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.028 * vol, end); g.gain.exponentialRampToValueAtTime(0.0001, end + 0.03);
+  o.connect(g); g.connect(audio.out || audio.bus); o.start(t); o.stop(end + 0.06);
+}
 // 音楽：2つの audio を交差フェードで切り替える。前回と同じ曲は避けて、毎回ちがう曲で始まる
 const BGM = {
   lobby: ['assets/bgm/waiting.mp3', 'assets/bgm/opening.mp3'],
@@ -1452,7 +1774,9 @@ function nextTrack() {
   toast(L('曲を変えた'), '');
 }
 function updateBgm(dt) {
-  const cur = bgmEls[bgm.cur], old = bgmEls[bgm.cur ^ 1], want = bgm.set ? bgmTarget() : 0;
+  const cur = bgmEls[bgm.cur], old = bgmEls[bgm.cur ^ 1], dm = bgmDuckMul(), want = bgm.set ? bgmTarget() * dm : 0;
+  // 静けさの間は音楽もすぐに引く（戻るときはゆっくり）
+  if (dm < 1 && !cur.paused && cur.volume > want) cur.volume = Math.max(want, cur.volume - dt * 3);
   // 2秒ほどでなめらかに寄せる。古い曲は3秒ほどで消える
   if (!cur.paused) cur.volume = Math.max(0, Math.min(1, cur.volume + Math.max(-dt * 0.5, Math.min(dt * 0.5, want - cur.volume))));
   if (!old.paused) { old.volume = Math.max(0, old.volume - dt * 0.33); if (old.volume <= 0.002) old.pause(); }
@@ -1593,6 +1917,8 @@ function draw() {
 
   // 糸（④）：術者の杖と、糸でつながった術式を結ぶ
   drawThreads(inView);
+  // 詠唱中：杖先に力が溜まって膨らむ光の玉
+  for (const u of vis) if (u.casting) drawCharge(u);
   // 爆発の煙（暗く重ねる）
   drawSmoke(inView);
 
@@ -1601,7 +1927,7 @@ function draw() {
   for (const s of world.spells) if (!s.done && s.state === 'fly' && s.kind === 'proj' && seen(s) && inView(s.x, s.y, 60)) drawFlyer(s);
   for (const s of world.spells) if (!s.done && s.state === 'fly' && s.kind === 'lob' && seen(s) && inView(s.x, s.y, 200)) drawLob(s);
   for (const s of world.spells) if (!s.done && s.kind === 'orbiter' && seen(s) && inView(s.x, s.y, 80)) { if (s.shape === 'castle') { const o = S.unitById(world, s.owner); if (o && s.y < o.y) continue; } drawOrbiter(s); }
-  for (const p of parts) if (inView(p.x, p.y, (p.r1 || p.r || 10) + 20) || p.x2 !== undefined) drawPart(p);
+  for (const p of parts) if (inView(p.x, p.y, (p.r1 || p.r || 10) + 20) || p.x2 !== undefined || p.kind === 'tether') drawPart(p);
   ctx.globalCompositeOperation = 'source-over';
   ctx.globalAlpha = 1;
   // 色調：冷たく沈んだ色に寄せる（闇の世界。光だけがあとでにじむ）
@@ -1934,9 +2260,14 @@ function drawMotes(inView) {
   for (const m of world.motes) {
     if (!inView(m.x, m.y, 30)) continue;
     const fade = m.field ? 1 : Math.min(1, (m.life - m.age) / 4);
-    const s = (3 + Math.min(8, m.v * 1.6)) * (0.8 + Math.sin(tt * 3 + m.x * 0.05) * 0.2);
-    ctx.globalAlpha = 0.6 * fade;
-    ctx.drawImage(moteGlow(m.ink), m.x - s * 2.6, m.y - s * 2.6, s * 5.2, s * 5.2);
+    // 星のように、粒ごとにゆっくり瞬く（速いちらつきはしない）
+    const tw = 0.72 + 0.28 * Math.sin(tt * (0.9 + (m.x * 0.013 % 0.6)) + m.y * 0.07);
+    const s = (3 + Math.min(8, m.v * 1.6)) * (0.85 + tw * 0.15);
+    // 湧いた魔素は誰の紋も持たない淡い光。散った者からこぼれた魔素は、その者の色から淡い光へほどけていく
+    const own = m.field || m.mana ? 0 : Math.max(0, 1 - m.age / 2.5);
+    ctx.globalAlpha = 0.6 * fade * tw * (1 - own * 0.6);
+    ctx.drawImage(PALE_MOTE(), m.x - s * 2.6, m.y - s * 2.6, s * 5.2, s * 5.2);
+    if (own > 0) { ctx.globalAlpha = 0.6 * fade * own; ctx.drawImage(glow(m.ink), m.x - s * 2.4, m.y - s * 2.4, s * 4.8, s * 4.8); }
     if (m.mana) {
       ctx.strokeStyle = rgba(hex('blue'), 0.9 * fade); ctx.lineWidth = 1.5;
       ctx.beginPath(); ctx.moveTo(m.x, m.y - s); ctx.lineTo(m.x + s * 0.7, m.y); ctx.lineTo(m.x, m.y + s); ctx.lineTo(m.x - s * 0.7, m.y); ctx.closePath(); ctx.stroke();
@@ -2046,30 +2377,12 @@ function drawZone(z) {
     ctx.restore();
     return;
   }
+  if (z.kind === 'field') { drawDomain(z, c, t, fade); ctx.restore(); return; }
   ctx.globalCompositeOperation = 'lighter';
   ctx.globalAlpha = (z.kind === 'orbit' ? 0.1 : 0.16) * fade;
   ctx.drawImage(glow(c), -z.zr * 1.15, -z.zr * 1.15, z.zr * 2.3, z.zr * 2.3);
   ctx.globalAlpha = fade;
   ctx.globalCompositeOperation = 'source-over';
-  // 結晶の格子：六つの宝石が縁を巡り、放射状の稜線が床に走る
-  if (z.kind !== 'body' && z.kind !== 'orbit') {
-    ctx.save(); ctx.rotate(t * 0.18);
-    ctx.strokeStyle = rgba(c, 0.18 * fade); ctx.lineWidth = 1;
-    ctx.beginPath(); for (let i = 0; i < 12; i++) { const a2 = i / 12 * TAU; ctx.moveTo(Math.cos(a2) * z.zr * 0.28, Math.sin(a2) * z.zr * 0.28); ctx.lineTo(Math.cos(a2) * z.zr * 0.97, Math.sin(a2) * z.zr * 0.97); } ctx.stroke();
-    const gn = LOW ? 3 : 6, gs = Math.max(5, Math.min(14, z.zr * 0.09));
-    for (let i = 0; i < gn; i++) { const a2 = i / gn * TAU; ctx.save(); ctx.translate(Math.cos(a2) * z.zr, Math.sin(a2) * z.zr); ctx.globalAlpha = 0.9 * fade; drawGem(ctx, gs, c, t * 0.8 + i, 6, t, z.id + i); ctx.restore(); }
-    ctx.restore();
-  }
-  // 床から生える結晶の柱：開いた瞬間に伸び、残る間は脈打つ
-  if (z.kind !== 'body' && z.kind !== 'orbit') {
-    const grow = Math.min(1, z.t / 0.35), sp = LOW ? 5 : 11;
-    for (let i = 0; i < sp; i++) {
-      const fr = ((z.id * 7 + i * 13) % 10) / 10, a2 = i / sp * TAU + z.id, rr = z.zr * (0.5 + 0.42 * fr), h = z.zr * (0.13 + 0.12 * fr) * grow;
-      if (h < 3) continue;
-      ctx.save(); ctx.translate(Math.cos(a2) * rr, Math.sin(a2) * rr - h * 0.5); ctx.scale(0.5, 1); ctx.globalAlpha = 0.9 * fade;
-      drawGem(ctx, h * 0.5, c, 0, 6, t, z.id + i); ctx.restore();
-    }
-  }
   ctx.rotate(t * (z.kind === 'siphon' || z.kind === 'well' ? 1.2 : 0.3));
   ctx.strokeStyle = rgba(c, 0.6); ctx.lineWidth = 1.6;
   ctx.setLineDash(z.kind === 'orbit' ? [6, 10] : [2, 6]);
@@ -2083,6 +2396,78 @@ function drawZone(z) {
     for (let i = 0; i < 4; i++) { ctx.beginPath(); for (let k = 0; k <= 16; k++) { const f2 = k / 16, a = i * TAU / 4 + f2 * 2.4, r = z.zr * (1 - f2) * 0.9; k ? ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r) : ctx.moveTo(Math.cos(a) * r, Math.sin(a) * r); } ctx.stroke(); }
   }
   ctx.restore();
+}
+// 円の場：魔力で満たされた空間。床に満ちる光、中心から縁へ走る波紋、縁を流れる光、縁から立ち上がる光の幕、
+// 中の昇る粒。原理ごとの印は一つだけ（動＝渦の筋・結＝六角・分＝放射の裂け目・換＝吸い込む渦・増＝膨らむ脈・相＝色のずれた縁）
+const curtainGrads = new Map();
+function drawDomain(z, c, t, fade) {
+  const open = 1 - Math.pow(1 - Math.min(1, z.t / 0.3), 3), R = z.zr * (0.25 + 0.75 * open), a = z.look ? z.look.a : 'motion';
+  const breathe = a === 'grow' ? 0.85 + 0.15 * Math.sin(t * 3 + z.id) : 1;
+  ctx.globalCompositeOperation = 'lighter';
+  // 床に満ちる光：中心は淡く、縁に向かって濃くなる（境界のある空間に見せる）
+  ctx.globalAlpha = fade * breathe;
+  const fl = ctx.createRadialGradient(0, 0, 0, 0, 0, R);
+  fl.addColorStop(0, rgba(c, 0.07)); fl.addColorStop(0.7, rgba(c, 0.1)); fl.addColorStop(0.95, rgba(c, 0.32)); fl.addColorStop(1, rgba(c, 0));
+  ctx.fillStyle = fl; ctx.beginPath(); ctx.arc(0, 0, R, 0, TAU); ctx.fill();
+  // 波紋：中心から縁へ（換は縁から中心へ）
+  ctx.lineWidth = 2;
+  for (let i = 0; i < 3; i++) {
+    let q = (t * 0.55 + i / 3 + z.id * 0.1) % 1; if (a === 'convert') q = 1 - q;
+    ctx.strokeStyle = rgba(c, 0.32 * Math.sin(q * Math.PI) * fade);
+    ctx.beginPath(); ctx.arc(0, 0, R * q, 0, TAU); ctx.stroke();
+  }
+  // 縁：広い淡い光・白い細い線・縁を流れる三つの光
+  ctx.globalAlpha = fade;
+  ctx.strokeStyle = rgba(c, 0.22); ctx.lineWidth = 12; ctx.beginPath(); ctx.arc(0, 0, R, 0, TAU); ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,250,240,.6)'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(0, 0, R, 0, TAU); ctx.stroke();
+  if (a === 'phase') { for (const [dx, col] of [[-3, '#ff5fa2'], [3, '#5aa9ff']]) { ctx.strokeStyle = rgba(col, 0.45); ctx.beginPath(); ctx.arc(dx, 0, R, 0, TAU); ctx.stroke(); } }
+  ctx.lineCap = 'round';
+  for (let i = 0; i < 3; i++) {
+    const s0 = t * 1.7 + i * TAU / 3;
+    ctx.strokeStyle = rgba(c, 0.85); ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(0, 0, R, s0, s0 + 0.55); ctx.stroke();
+    ctx.globalAlpha = fade * 0.9; ctx.drawImage(hotGlow(c), Math.cos(s0 + 0.55) * R - 6, Math.sin(s0 + 0.55) * R - 6, 12, 12);
+    ctx.globalAlpha = fade;
+  }
+  // 縁から立ち上がる光の幕：波打つ高さで縁を巡る（空間の壁）
+  let cg = curtainGrads.get(c);
+  if (!cg) { cg = ctx.createLinearGradient(0, 0, 0, -1); cg.addColorStop(0, 'rgba(255,250,240,.7)'); cg.addColorStop(0.12, rgba(c, 0.55)); cg.addColorStop(1, rgba(c, 0)); curtainGrads.set(c, cg); }
+  const N = LOW ? 18 : 40, sw = TAU * R / N * 0.85;
+  ctx.fillStyle = cg;
+  for (let i = 0; i < N; i++) {
+    const an = i / N * TAU, h = R * 0.32 * (0.55 + 0.45 * Math.sin(an * 3 - t * 2.4 + z.id)) * open;
+    ctx.save(); ctx.translate(Math.cos(an) * R, Math.sin(an) * R); ctx.scale(sw * Math.max(0.25, Math.abs(Math.sin(an))), h);
+    ctx.globalAlpha = fade * 0.35; ctx.fillRect(-0.5, -1, 1, 1);
+    ctx.restore();
+  }
+  // 空間全体をうすく包む光
+  ctx.globalAlpha = 0.14 * fade; ctx.drawImage(glow(c), -R * 1.1, -R * 1.25, R * 2.2, R * 2.2);
+  ctx.globalAlpha = fade;
+  // 中の陣：ゆっくり回る刻みの輪と、逆に回る内輪
+  ctx.save(); ctx.rotate(t * 0.25);
+  ctx.strokeStyle = rgba(c, 0.5); ctx.lineWidth = 1.3;
+  runeRing(ctx, R * 0.84, Math.max(8, Math.round(R / 14)), 4.5, z.id);
+  ctx.rotate(-t * 0.7);
+  ctx.strokeStyle = rgba(c, 0.4); ctx.beginPath(); ctx.arc(0, 0, R * 0.34, 0, TAU); ctx.stroke();
+  // 原理の印
+  ctx.strokeStyle = rgba(c, 0.55); ctx.lineWidth = 1.6;
+  if (a === 'bind') { ctx.beginPath(); for (let k = 0; k <= 6; k++) { const an = k * TAU / 6, x = Math.cos(an) * R * 0.62, y = Math.sin(an) * R * 0.62; k ? ctx.lineTo(x, y) : ctx.moveTo(x, y); } ctx.stroke(); }
+  else if (a === 'divide') { ctx.beginPath(); for (let k = 0; k < 6; k++) { const an = k * TAU / 6, l = R * (0.5 + 0.25 * Math.sin(t * 5 + k)); ctx.moveTo(Math.cos(an) * R * 0.34, Math.sin(an) * R * 0.34); ctx.lineTo(Math.cos(an) * l, Math.sin(an) * l); } ctx.stroke(); }
+  else if (a === 'motion' || a === 'convert') {
+    const dir = a === 'convert' ? -1 : 1;
+    for (let k = 0; k < 4; k++) { ctx.beginPath(); for (let j = 0; j <= 14; j++) { const q = j / 14, an = k * TAU / 4 + dir * (q * 2.2 + t * 2), r = R * (0.25 + 0.65 * q); j ? ctx.lineTo(Math.cos(an) * r, Math.sin(an) * r) : ctx.moveTo(Math.cos(an) * r, Math.sin(an) * r); } ctx.stroke(); }
+  }
+  ctx.restore();
+  // 中から昇る魔素の粒（決まった周期で昇る）
+  const m = LOW ? 5 : 12;
+  for (let i = 0; i < m; i++) {
+    const q = (t * 0.45 + i / m) % 1, h1 = (i * 0.618 + z.id * 0.37) % 1, rr = R * 0.85 * Math.sqrt((i * 0.371) % 1), an = h1 * TAU;
+    const x = Math.cos(an) * rr, y = Math.sin(an) * rr - q * R * 0.45, s = 3.2;
+    ctx.globalAlpha = Math.sin(q * Math.PI) * 0.7 * fade; ctx.drawImage(glow(c), x - s * 2, y - s * 2, s * 4, s * 4);
+  }
+  // 開いた瞬間：縁が白く光る
+  if (z.t < 0.45) { ctx.globalAlpha = (1 - z.t / 0.45) * fade; ctx.strokeStyle = '#fffaf0'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(0, 0, R, 0, TAU); ctx.stroke(); }
+  ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
 }
 // 面の結界：線分に沿って立つ一枚の壁。固体は石と結晶の積まれた壁（上面・前面・目地・影）、
 // エネルギーは揺らぐ光の幕（六角の網目と昇る走査線）、完全はその両方に金の光が重なる
@@ -2427,11 +2812,24 @@ function drawThreads(inView) {
     const sag = Math.min(60, d * 0.12), mx = (tip.x + o.x) / 2, my = (tip.y + o.y) / 2 + sag;
     const nm = o.col || u.ink, col = hex(nm), pulse = 0.5 + 0.5 * Math.sin(t * 5 + o.id);
     const path = () => { ctx.beginPath(); ctx.moveTo(tip.x, tip.y); ctx.quadraticCurveTo(mx, my, o.x, o.y); ctx.stroke(); };
-    // 淡い光の帯 → 色の糸 → 白い芯の三層。糸の上を光の粒が杖から術へ走る
-    ctx.setLineDash([]); ctx.lineCap = 'round';
-    ctx.strokeStyle = rgba(col, 0.08 + 0.06 * pulse); ctx.lineWidth = 7; path();
+    // 淡い光の帯 → 色の糸 → 白い芯の三層。糸のまわりを魔力の流れが波打って杖から術へ進み、光の粒が走る
+    ctx.setLineDash([]); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.strokeStyle = rgba(col, 0.08 + 0.06 * pulse); ctx.lineWidth = 8; path();
     ctx.strokeStyle = rgba(col, 0.5 + 0.15 * pulse); ctx.lineWidth = 1.8; path();
     ctx.strokeStyle = 'rgba(255,250,240,.6)'; ctx.lineWidth = 0.7; path();
+    {
+      const seg = Math.max(10, Math.min(40, Math.round(d / 14)));
+      ctx.strokeStyle = rgba(col, 0.55); ctx.lineWidth = 1.1;
+      ctx.beginPath();
+      for (let i = 0; i <= seg; i++) {
+        const q = i / seg, p = 1 - q, bx = p * p * tip.x + 2 * p * q * mx + q * q * o.x, by = p * p * tip.y + 2 * p * q * my + q * q * o.y;
+        const tx2 = 2 * p * (mx - tip.x) + 2 * q * (o.x - mx), ty2 = 2 * p * (my - tip.y) + 2 * q * (o.y - my), tl = hyp(tx2, ty2) || 1;
+        const amp = 5 * Math.sin(q * Math.PI), wv = Math.sin(q * d / 22 - t * 9 + o.id) * amp;
+        const x = bx - ty2 / tl * wv, y = by + tx2 / tl * wv;
+        i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+      }
+      ctx.stroke();
+    }
     const beads = Math.min(6, 2 + Math.floor(d / 90));
     for (let k = 0; k < beads; k++) {
       const q = (t * 0.8 + k / beads + o.id * 0.11) % 1, p = 1 - q;
@@ -2477,7 +2875,63 @@ function staffPose(u) {
   return { hx, hy, tx, ty, face, s, fy, aiming };
 }
 function staffTip(u) { const p = staffPose(u); return { x: p.tx, y: p.ty }; }
-// 格：育つほど体は大きくならず、装いが整っていく（制御容量が増えるレベルに合わせる）。光のオーラや翼は付けない
+// 散逸の光（オーラ）：魔素は構造を失う瞬間にいちばん強く光る。体から漏れていく魔素が、足元から炎の舌のように立ちのぼり、
+// 昇った粒は色を失って灰になる。魔素を溜めた者ほど強く燃える（法則二：大きく育つほど保てない）。詠唱中は術の色で燃え上がる。
+// 乱数でちらつかせず、ゆっくりした揺らぎだけで生きて見せる。自分以外は控えめに
+function drawAura(u, fy, s, isTop) {
+  const t = world.t, me = u.id === world.heroId, gr = grandeur(u);
+  const casting = !!u.casting, col = casting ? S.recipeResult(u.spells[u.casting.slot]).color : u.ink, c = hex(col);
+  const burn = Math.max(0, Math.min(1, (u.mass - W.decay.floor) / (W.decay.soft || 3000)));
+  const base = (0.28 + burn * 0.7 + gr * 0.06 + (isTop ? 0.1 : 0)) * (me ? 1 : 0.6);
+  const k = Math.min(1.5, base + (casting ? 0.6 : 0)), H = (60 + burn * 30 + (casting ? 24 : 0)) * s, W2 = 16 * s;
+  ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.translate(u.x, fy);
+  // 体を包む淡い光（縦長）
+  ctx.globalAlpha = 0.3 * k;
+  ctx.drawImage(glow(col), -W2 * 2.4, -H * 1.05, W2 * 4.8, H * 1.45);
+  // 炎の舌：外側の色の層と、内側の明るい層の二枚
+  const n = LOW ? 4 : 5 + Math.round(burn * 3);
+  for (let layer = 0; layer < 2; layer++) {
+    for (let i = 0; i < n; i++) {
+      const ph = i * 2.39 + u.id * 0.7, x0 = ((i + 0.5) / n - 0.5) * W2 * (layer ? 1.8 : 2.8);
+      const h = H * (layer ? 0.7 : 1) * (0.7 + 0.3 * Math.sin(t * 2.3 + ph)) * (1 - Math.abs(x0) / (W2 * 2.6));
+      const sw = Math.sin(t * 3.1 + ph) * W2 * 0.35 - u.vx / 300 * W2, w = W2 * (layer ? 0.34 : 0.55);
+      const g = ctx.createLinearGradient(0, 0, 0, -h);
+      g.addColorStop(0, rgba(c, 0)); g.addColorStop(0.18, layer ? 'rgba(255,248,236,.5)' : rgba(c, 0.55)); g.addColorStop(1, rgba(c, 0));
+      ctx.fillStyle = g; ctx.globalAlpha = (layer ? 0.5 : 0.65) * k;
+      ctx.beginPath(); ctx.moveTo(x0 - w, 2 * s);
+      ctx.quadraticCurveTo(x0 - w * 0.6 + sw * 0.4, -h * 0.5, x0 + sw, -h);
+      ctx.quadraticCurveTo(x0 + w * 0.6 + sw * 0.4, -h * 0.5, x0 + w, 2 * s);
+      ctx.closePath(); ctx.fill();
+    }
+  }
+  // 漏れていく魔素の粒：昇りながら光を失い、上のほうでは灰になる（決まった周期で昇るので、ちらつかない）
+  const m = LOW ? 3 : 4 + Math.round(burn * 8) + (casting ? 4 : 0), flakes = [];
+  for (let i = 0; i < m; i++) {
+    const q = (t * (0.45 + (i % 3) * 0.1) + i / m + u.id * 0.13) % 1, x = Math.sin(i * 5.1 + u.id) * W2 * 1.3 + Math.sin(t * 2 + i) * 3 * s, y = -q * H * 1.35, sz = (2.4 + (i % 2)) * s * (1 - q * 0.5);
+    if (q < 0.62) { ctx.globalAlpha = Math.sin(q / 0.62 * Math.PI * 0.5 + 0.2) * 0.75 * k * (1 - q / 0.62 * 0.6); ctx.drawImage(glow(col), x - sz * 2, y - sz * 2, sz * 4, sz * 4); }
+    else flakes.push(x, y, (1 - q) / 0.38);
+  }
+  // 足元の噴き上がり：地面を這う光の楕円
+  ctx.save(); ctx.scale(1, 0.35); ctx.globalAlpha = 0.3 * k * (0.85 + 0.15 * Math.sin(t * 4 + u.id));
+  ctx.drawImage(glow(col), -W2 * 2.6, -W2 * 2.6, W2 * 5.2, W2 * 5.2); ctx.restore();
+  // 灰：光ではなく、暗い灰色の小さな欠片として重ねる
+  ctx.globalCompositeOperation = 'source-over'; ctx.fillStyle = '#8a8798';
+  for (let i = 0; i < flakes.length; i += 3) { ctx.globalAlpha = 0.55 * flakes[i + 2] * Math.min(1, k); ctx.fillRect(flakes[i], flakes[i + 1], 1.6 * s, 1.6 * s); }
+  ctx.restore();
+}
+// 詠唱の溜め：杖先の光の玉が詠唱の進みにつれて膨らみ、まわりを細い輪が締めつけるように回る
+function drawCharge(u) {
+  const cst = u.casting, col = S.recipeResult(u.spells[cst.slot]).color, c = hex(col), tip = staffTip(u), t = world.t;
+  const f = Math.max(0, Math.min(1, cst.t / Math.max(0.05, cst.total)));
+  const ray = u.spells[cst.slot].stages[0].vessel === 'ray', R = (ray ? 7 : 5) + f * (ray ? 12 : 7);
+  ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.translate(tip.x, tip.y);
+  ctx.globalAlpha = 0.5 + 0.2 * Math.sin(t * 20 + u.id); ctx.drawImage(glow(col), -R * 3, -R * 3, R * 6, R * 6);
+  ctx.globalAlpha = 0.95; ctx.drawImage(hotGlow(col), -R, -R, R * 2, R * 2);
+  ctx.strokeStyle = rgba(c, 0.8); ctx.lineWidth = 1.1;
+  for (let i = 0; i < 2; i++) { ctx.save(); ctx.rotate(t * (i ? -5 : 4) + i); ctx.beginPath(); ctx.ellipse(0, 0, R * (1.9 - f * 0.6), R * (0.6 - f * 0.2), 0, 0, TAU); ctx.stroke(); ctx.restore(); }
+  ctx.restore();
+}
+// 格：育つほど体は大きくならず、装いが整っていく（制御容量が増えるレベルに合わせる）。翼や光輪は付けない
 // 0 素の魔導士 / 1 金の縁取り / 2 長い外套と額の宝石 / 3 金の肩当て
 function grandeur(u) { const l = u.level || 0; return l >= 12 ? 3 : l >= 7 ? 2 : l >= 3 ? 1 : 0; }
 const GOLD = '#d9b86a', GOLD_HI = '#ffe19a';
@@ -2515,14 +2969,8 @@ function drawMage(u, isTop, image = false) {
   const gr = image ? 0 : grandeur(u);
   if (u.rootT > 0) { ctx.strokeStyle = rgba(hex('green'), 0.9); ctx.lineWidth = 3; for (let i = 0; i < 6; i++) { const a = i / 6 * TAU; ctx.beginPath(); ctx.moveTo(Math.cos(a) * r * 1.3, Math.sin(a) * r * 1.3); ctx.quadraticCurveTo(Math.cos(a + 0.5) * r * 0.8, Math.sin(a + 0.5) * r * 0.8, Math.cos(a) * r * 0.4, Math.sin(a) * r * 0.4); ctx.stroke(); } }
   ctx.restore();
-  // 詠唱中：体のまわりに力の光がまとわりつき、脈打つ
-  if (casting && !ghost) {
-    ctx.save(); ctx.globalCompositeOperation = 'lighter';
-    ctx.globalAlpha = 0.28 + Math.sin(t * 14 + u.id) * 0.08;
-    const col = S.recipeResult(u.spells[u.casting.slot]).color;
-    ctx.drawImage(glow(col), u.x - r * 2.2, fy - r * 3.6, r * 4.4, r * 4.4);
-    ctx.restore();
-  }
+  // 魔力のオーラ：体の後ろに立ちのぼる（詠唱中は術の色で燃え上がる）
+  if (!ghost && !image && !u.dummy) drawAura(u, fy, s, isTop);
   // 影
   const sh = ctx.createRadialGradient(u.x, fy, 0, u.x, fy, r * 0.9);
   sh.addColorStop(0, 'rgba(0,0,0,.65)'); sh.addColorStop(1, 'rgba(0,0,0,0)');
@@ -3313,11 +3761,20 @@ function drawPart(p) {
     ctx.drawImage(hotGlow(p.ink), p.x - len * 0.45, p.y - th * 0.5, len * 0.9, th);
     ctx.globalAlpha = a * 0.5;
     ctx.drawImage(glow(p.ink), p.x - th * 1.2, p.y - len * 0.35, th * 2.4, len * 0.7);
-  } else if (p.kind === 'ember') {
-    const s = p.r * (1 - f * 0.5);
-    ctx.globalAlpha = (1 - f) * (0.55 + Math.random() * 0.45);
-    ctx.drawImage(glow(p.ink), p.x - s * 3, p.y - s * 3, s * 6, s * 6);
-    ctx.fillStyle = '#fffaf0'; ctx.fillRect(p.x - s * 0.45, p.y - s * 0.45, s * 0.9, s * 0.9);
+  } else if (p.kind === 'ember' || p.kind === 'ash') {
+    // 火の粉：光りながら舞い、光を失うと灰になって落ちる（美しいものほど短く、長く残るのは灰だけ）
+    const s = p.r * (1 - f * 0.4), hot = p.kind === 'ash' ? 0 : Math.max(0, 1 - f / 0.55);
+    if (hot > 0) {
+      ctx.globalAlpha = hot * (0.75 + 0.25 * Math.sin(p.t * 40 + p.x));
+      ctx.drawImage(glow(p.ink), p.x - s * 3, p.y - s * 3, s * 6, s * 6);
+      ctx.fillStyle = '#fffaf0'; ctx.fillRect(p.x - s * 0.45, p.y - s * 0.45, s * 0.9, s * 0.9);
+    }
+    if (hot < 0.5) {
+      ctx.save(); ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = Math.min(1, (0.5 - hot) * 2) * (1 - f) * 0.7; ctx.fillStyle = '#8a8798';
+      ctx.translate(p.x, p.y); ctx.rotate(p.t * 2 + p.r); ctx.fillRect(-s * 0.6, -s * 0.35, s * 1.2, s * 0.7);
+      ctx.restore();
+    }
   } else if (p.kind === 'arc') {
     // 電弧：毎回ちがう折れ線。色の太い線に白い細い芯
     const dx = p.x2 - p.x, dy = p.y2 - p.y, L = hyp(dx, dy) || 1, nx = -dy / L, ny = dx / L;
@@ -3346,26 +3803,94 @@ function drawPart(p) {
     }
     ctx.restore();
   } else if (p.kind === 'beam') {
-    // 光線：一本の光。外の淡い光 → 色の層 → 白熱の芯。撃った瞬間だけ太く、消えるときは細く締まって消える。
-    // 縁を乱数で震わせず、芯に沿って流れる明るさの波で、力が流れ続けているように見せる
-    const a = f < 0.06 ? 1 : Math.pow(1 - (f - 0.06) / 0.94, 1.5);
-    const w0 = p.w * (f < 0.1 ? 1.45 - f * 4.5 : Math.max(0.15, 1 - (f - 0.1) * 0.95)) * (1 + 0.04 * Math.sin(p.t * 70 + (p.seed || 0)));
-    ctx.lineCap = 'round';
-    const line = () => { ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x2, p.y2); ctx.stroke(); };
-    for (const [w, al] of [[w0 * 6, 0.06], [w0 * 2.8, 0.18], [w0 * 1.4, 0.55]]) { ctx.strokeStyle = rgba(c, al * a); ctx.lineWidth = w; line(); }
-    ctx.strokeStyle = `rgba(255,251,244,${a})`; ctx.lineWidth = Math.max(1.5, w0 * 0.42); line();
-    // 流れる光：芯に沿って明るい帯が先へ走る
+    // 光線：陣から撃ち出す一本の光。頭が一瞬で先へ伸び（射出）、白く飽和した太い芯が保たれ、細く締まって消える。
+    // 外の淡い光 → 色の層 → 白熱の芯。撃った直後だけ、光線を包む輪が先へ走る（力が押し出される）
     const dx = p.x2 - p.x, dy = p.y2 - p.y;
-    ctx.strokeStyle = `rgba(255,255,255,${0.32 * a})`; ctx.lineWidth = w0 * 1.1;
+    const reach = Math.min(1, p.t / 0.07), hx = p.x + dx * reach, hy = p.y + dy * reach;
+    const hold = 0.34, a = f < hold ? 1 : Math.pow(1 - (f - hold) / (1 - hold), 1.6);
+    const w0 = p.w * (p.t < 0.09 ? 1.7 - p.t * 5 : f < hold ? 1.05 + 0.06 * Math.sin(p.t * 48 + (p.seed || 0)) : Math.max(0.12, 1 - (f - hold) * 1.3));
+    ctx.lineCap = 'round';
+    const line = () => { ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(hx, hy); ctx.stroke(); };
+    for (const [w, al] of [[w0 * 7, 0.07], [w0 * 3.4, 0.2], [w0 * 1.7, 0.6]]) { ctx.strokeStyle = rgba(c, al * a); ctx.lineWidth = w; line(); }
+    ctx.strokeStyle = `rgba(255,251,244,${a})`; ctx.lineWidth = Math.max(1.6, w0 * 0.62); line();
+    // 撃った直後：光線を包む輪が根元から先へ走る（横から見た輪なので細い楕円）
+    if (p.t < 0.42) for (let k = 0; k < 3; k++) {
+      const q = (p.t * 3.2 - k * 0.22); if (q < 0 || q > 1) continue;
+      ctx.save(); ctx.translate(p.x + dx * q, p.y + dy * q); ctx.rotate(Math.atan2(dy, dx));
+      ctx.globalAlpha = (1 - q) * 0.7 * a; ctx.strokeStyle = rgba(c, 1); ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.ellipse(0, 0, w0 * 0.5, w0 * (2.2 + q * 1.6), 0, 0, TAU); ctx.stroke(); ctx.restore();
+    }
+    // 芯に沿って流れる明るさ（力が流れ続けている）
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = `rgba(255,255,255,${0.3 * a})`; ctx.lineWidth = w0 * 1.2;
     for (let k = 0; k < 2; k++) {
-      const q = (p.t * 2.6 + k * 0.5 + (p.seed || 0)) % 1, q0 = Math.max(0, q - 0.14);
+      const q = Math.min(reach, (p.t * 2.6 + k * 0.5 + (p.seed || 0)) % 1), q0 = Math.max(0, q - 0.16);
       ctx.beginPath(); ctx.moveTo(p.x + dx * q0, p.y + dy * q0); ctx.lineTo(p.x + dx * q, p.y + dy * q); ctx.stroke();
     }
-    // 両端の白熱
+    // 両端の白熱（終点は焼ける点）
     ctx.globalAlpha = a;
-    const s1 = w0 * 2.4, s2 = w0 * 3.2;
+    const s1 = w0 * 2.8, s2 = w0 * (reach < 1 ? 2.4 : 3.8);
     ctx.drawImage(hotGlow(p.ink), p.x - s1, p.y - s1, s1 * 2, s1 * 2);
-    ctx.drawImage(hotGlow(p.ink), p.x2 - s2, p.y2 - s2, s2 * 2, s2 * 2);
+    ctx.drawImage(hotGlow(p.ink), hx - s2, hy - s2, s2 * 2, s2 * 2);
+    ctx.globalAlpha = a * 0.5; ctx.drawImage(glow(p.ink), hx - s2 * 3, hy - s2 * 3, s2 * 6, s2 * 6);
+  } else if (p.kind === 'gate') {
+    // 光線の陣：狙いの向きを向いて立つ魔法陣（横から見た円なので細い楕円）。外輪・六芒・刻み・内輪が逆に回り、撃ったあと前へ押されて消える
+    const open = 1 - Math.pow(1 - Math.min(1, f / 0.18), 3), a = f < 0.55 ? 1 : 1 - (f - 0.55) / 0.45;
+    const rr = p.r * (0.4 + open * 0.6) * (1 + f * 0.15), push = f * p.r * 0.5;
+    ctx.save(); ctx.translate(p.x + Math.cos(p.a) * push, p.y + Math.sin(p.a) * push); ctx.rotate(p.a); ctx.scale(0.3, 1);
+    ctx.globalAlpha = a * 0.55; ctx.drawImage(glow(p.ink), -rr * 1.4, -rr * 1.4, rr * 2.8, rr * 2.8);
+    ctx.globalAlpha = a; ctx.lineWidth = 2.4; ctx.strokeStyle = c;
+    ctx.beginPath(); ctx.arc(0, 0, rr, 0, TAU * open); ctx.stroke();
+    ctx.save(); ctx.rotate(p.t * 3);
+    ctx.strokeStyle = 'rgba(255,250,240,.9)'; ctx.lineWidth = 1.3;
+    ctx.beginPath(); ctx.arc(0, 0, rr * 0.86, 0, TAU); ctx.stroke();
+    ctx.strokeStyle = rgba(c, 0.85); ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    for (const off of [0, Math.PI / 3]) for (let i = 0; i <= 3; i++) { const an = off + i * TAU / 3, x = Math.cos(an) * rr * 0.84, y = Math.sin(an) * rr * 0.84; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+    ctx.stroke();
+    runeRing(ctx, rr * 0.95, 14, Math.max(2.5, rr * 0.07), p.rune);
+    ctx.restore();
+    ctx.rotate(-p.t * 4.5); ctx.strokeStyle = rgba(c, 0.9); ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.arc(0, 0, rr * 0.42, 0, TAU); ctx.stroke();
+    ctx.beginPath(); for (let i = 0; i < 8; i++) { const an = i / 8 * TAU; ctx.moveTo(Math.cos(an) * rr * 0.42, Math.sin(an) * rr * 0.42); ctx.lineTo(Math.cos(an) * rr * 0.62, Math.sin(an) * rr * 0.62); } ctx.stroke();
+    ctx.restore();
+  } else if (p.kind === 'link') {
+    // 魔力の連結：術者の杖から、次の段が開く場所へ魔力が一筋流れ込む。先端の光が走り、通り過ぎた線は細く消える
+    const o = S.unitById(world, p.id);
+    if (o && o.alive) { const tip = staffTip(o); p.x = tip.x; p.y = tip.y; }
+    const head = Math.min(1, f / 0.35), tail = Math.max(0, (f - 0.3) / 0.7);
+    const dx = p.x2 - p.x, dy = p.y2 - p.y, L = hyp(dx, dy) || 1, nx = -dy / L, ny = dx / L, sag = Math.min(50, L * 0.12);
+    const at = q => { const b = Math.sin(q * Math.PI) * sag + Math.sin(q * 12 - p.t * 18) * 3 * (1 - q); return [p.x + dx * q + nx * b, p.y + dy * q + ny * b]; };
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    for (const [w, st] of [[6, rgba(c, 0.18)], [2, rgba(c, 0.8)], [0.8, 'rgba(255,250,240,.9)']]) {
+      ctx.strokeStyle = st; ctx.lineWidth = w; ctx.globalAlpha = 1 - tail;
+      ctx.beginPath();
+      for (let i = 0; i <= 20; i++) { const q = tail + (head - tail) * i / 20, [x, y] = at(q); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+      ctx.stroke();
+    }
+    const [hx2, hy2] = at(head), s = 10;
+    ctx.globalAlpha = 1 - f; ctx.drawImage(hotGlow(p.ink), hx2 - s, hy2 - s, s * 2, s * 2);
+  } else if (p.kind === 'tether') {
+    // 射出の噴流：杖先から狙いの向きへ、魔力の筋が伸びて細く消える（撃ち出した弾を追う）
+    const o = S.unitById(world, p.id);
+    if (o && o.alive) { const tip = staffTip(o); p.x = tip.x; p.y = tip.y; }
+    const e = 1 - Math.pow(1 - f, 3), len = 30 + e * 110, st = f * len * 0.6, a = 1 - f;
+    const cx = Math.cos(p.a), cy = Math.sin(p.a);
+    ctx.lineCap = 'round';
+    for (const [w, sty] of [[7 * a, rgba(c, 0.22 * a)], [2 * a + 0.5, rgba(c, 0.8 * a)], [0.9, `rgba(255,250,240,${0.9 * a})`]]) {
+      ctx.strokeStyle = sty; ctx.lineWidth = w;
+      ctx.beginPath(); ctx.moveTo(p.x + cx * st, p.y + cy * st); ctx.lineTo(p.x + cx * len, p.y + cy * len); ctx.stroke();
+    }
+  } else if (p.kind === 'relay') {
+    // 段の継ぎ目：次の段が開く場所に、鎖の環のような小さな陣が一瞬灯る（術が魔力でつながる印）
+    const open = 1 - Math.pow(1 - Math.min(1, f / 0.25), 3), a = 1 - f * f, rr = p.r * (0.6 + open * 0.5);
+    ctx.save(); ctx.translate(p.x, p.y); ctx.scale(1, 0.5); ctx.rotate(p.t * 2.5);
+    ctx.globalAlpha = a; ctx.strokeStyle = c; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(0, 0, rr, 0, TAU * open); ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,250,240,.85)'; ctx.lineWidth = 1;
+    for (let i = 0; i < 3; i++) { const an = i * TAU / 3; ctx.beginPath(); ctx.ellipse(Math.cos(an) * rr * 0.45, Math.sin(an) * rr * 0.45, rr * 0.42, rr * 0.2, an, 0, TAU); ctx.stroke(); }
+    ctx.globalAlpha = a * 0.6; ctx.drawImage(glow(p.ink), -rr * 1.3, -rr * 1.3, rr * 2.6, rr * 2.6);
+    ctx.restore();
   } else if (p.kind === 'bolt') {
     ctx.globalAlpha = 1 - f; ctx.strokeStyle = c; ctx.lineWidth = p.w;
     ctx.beginPath(); ctx.moveTo(p.x, p.y);
@@ -3377,6 +3902,11 @@ function drawPart(p) {
     const k = p.kind === 'slash' ? Math.min(1, f * 4) : 1;
     ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x + (p.x2 - p.x) * k, p.y + (p.y2 - p.y) * k); ctx.stroke();
     if (p.kind === 'slash') { ctx.strokeStyle = rgba(c, 0.6 * (1 - f)); ctx.lineWidth = p.w * 3; ctx.stroke(); }
+  } else if (p.kind === 'absorb') {
+    const o = S.unitById(world, p.id), tx = o ? o.x : p.x, ty = o ? o.y - o.r * 0.6 : p.y, e = f * f;
+    const x = p.x + (tx - p.x) * e, y = p.y + (ty - p.y) * e, sz = 7 * (1 - f * 0.5);
+    ctx.globalAlpha = 0.9 * (1 - f * 0.4); ctx.drawImage(PALE_MOTE(), x - sz, y - sz, sz * 2, sz * 2);
+    ctx.globalAlpha = 0.8 * f; ctx.drawImage(glow(p.ink), x - sz * 1.4, y - sz * 1.4, sz * 2.8, sz * 2.8);
   } else if (p.kind === 'drain') {
     const e = f * f;
     const x = p.x + (p.tx - p.x) * e, y = p.y + (p.ty - p.y) * e;

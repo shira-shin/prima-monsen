@@ -1008,7 +1008,7 @@ function spawnWall(w, owner, base, at) {
   const hp = C.wall.hp * (1 + C.wall.bindHp * echo(st.p.bind)) * C.hardness[st.matter] * Math.sqrt(st.size) * base.unit * base.mul;
   const nx = -Math.sin(dir), ny = Math.cos(dir);
   addWard(w, base, p.x, p.y, 15, hp, 'wall', C.wall.life * st.time, nx * half, ny * half, Math.cos(dir), Math.sin(dir));
-  w.events.push({ type: 'zone', id: 0, kind: 'wall', x: p.x, y: p.y, r: half, col: base.col, rtype: 'wall', owner: owner.id });
+  w.events.push({ type: 'zone', id: 0, kind: 'wall', x: p.x, y: p.y, r: half, col: base.col, rtype: 'wall', owner: owner.id, a: base.look.a, b: base.look.b, matter: st.matter });
 }
 // hx, hy：面の半分の長さのベクトル。面は線分 (x±hx, y±hy) に太さ r を持つ。dx, dy：動で進む向き
 function addWard(w, s, x, y, r, hp, kind, life, hx, hy, dx, dy) {
@@ -1058,7 +1058,7 @@ function spawnField(w, owner, base, at) {
     tick: C.field.tick, barrier: st.p.bind ? 'bulwark' : null, matter: st.matter, hp, max: hp, dead: false, hold: base.hold, linked: base.linked, cost: base.cost,
     dx: Math.cos(at.dir), dy: Math.sin(at.dir), rec: base.rec, si: base.si, st, mul: base.mul, unit: base.unit, boost: base.boost, dmg: base.dmg, veil: base.veil, bindLv: base.bindLv, advanced: false, grp: null, k: base.k };
   w.zones.push(z);
-  w.events.push({ type: 'zone', id: z.id, kind: 'field', x: z.x, y: z.y, r: zr, col: z.col, rtype: st.p.bind ? 'bulwark' : 'field', owner: z.owner });
+  w.events.push({ type: 'zone', id: z.id, kind: 'field', x: z.x, y: z.y, r: zr, col: z.col, rtype: st.p.bind ? 'bulwark' : 'field', owner: z.owner, a: z.look.a, b: z.look.b, matter: st.matter });
   fieldBurst(w, z);
 }
 // 開いた瞬間：中の相手に強く作用し、弾を吹き消し、自分の合図の罠を誘爆させる
@@ -1105,7 +1105,7 @@ function spawnBody(w, owner, base) {
     tick: 0, barrier: null, matter: 'energy', hp: 0, max: 0, dead: false, hold: base.hold, linked: base.linked, cost: base.cost,
     dx: Math.cos(owner.aim), dy: Math.sin(owner.aim), rec: base.rec, si: base.si, st, mul: base.mul, unit: base.unit, boost: base.boost, dmg: base.dmg, veil: base.veil, bindLv: base.bindLv, advanced: false, grp: null, k: base.k };
   w.zones.push(z);
-  w.events.push({ type: 'buff', id: owner.id, kind: base.look.a, x: owner.x, y: owner.y, col: base.col });
+  w.events.push({ type: 'buff', id: owner.id, kind: base.look.a, b: base.look.b, x: owner.x, y: owner.y, col: base.col });
   if (st.p.phase > 0 && st.p.grow > 0) spawnClones(w, owner, st, base.col);
 }
 // 分身：相（姿を写す）と増（数を増やす）が揃うと、術者の姿の囮が散らばる。狙いと追尾を引き、割られると纏の「触れたら」が開く
@@ -1175,7 +1175,7 @@ function spawnOrbit(w, owner, base) {
       vx: 0, vy: 0, speed: 0, range: 0, traveled: 0, homing: false, tgt: null, retarget: 0, pierce: 0, stopAt: Infinity, returns: false, back: false,
       life: C.orbit.life * st.time, ang, orad, hp, hitT: C.orbit.hitCd, spin, hit: [], passed: [], shape: shapeFor(st), size, max: hp });
   }
-  w.events.push({ type: 'zone', id: 0, kind: 'blades', x: owner.x, y: owner.y, r: orad, col: base.col, rtype: 'orbit', owner: owner.id });
+  w.events.push({ type: 'zone', id: 0, kind: 'blades', x: owner.x, y: owner.y, r: orad, col: base.col, rtype: 'orbit', owner: owner.id, a: base.look.a, b: base.look.b, matter: st.matter });
 }
 function bladeBroken(w, s) {
   s.done = true;
