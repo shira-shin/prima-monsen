@@ -113,6 +113,22 @@ LANG.en = {
     "上の「術式台」ボタン": "The \"Spell forge\" button at the top",
     "修練場に残る": "Stay in the training hall",
     "手ほどきを終える": "End tutorial",
+    "手ほどきの途中": "Tutorial in progress",
+    "やめるときは「手ほどきを終える」を押す": "To quit, press \"End tutorial\"",
+    "術式台を開く（T）": "Open the spell forge (T)",
+    "「決定」ボタンで閉じる": "Close with the \"Confirm\" button",
+    "左クリックで撃つ": "Left click to fire",
+    "再生": "Play",
+    "一時停止": "Pause",
+    "まず実演で魔法の仕組みを見て、そのあと自分で試そう。": "Watch a demo of how magic works first, then try it yourself.",
+    "見て学ぶ": "Watch and learn",
+    "操作して学ぶ": "Learn by playing",
+    "はじめに": "Introduction",
+    "前へ": "Back",
+    "次へ": "Next",
+    "操作して試す": "Try it yourself",
+    "終了": "End",
+    "実演で見る": "Watch the demo",
     "結界の外で構造が崩れた": "Your structure collapsed outside the ward",
     "{0}・計 {1} pt": "{0} · total {1} pt",
     "表示で問題が起きた": "A display problem occurred",
@@ -1240,32 +1256,134 @@ LANG.en = {
       ],
       "tutorial": [
         [
-          "Motion and Divide: cast a bolt",
-          "Aim your arcane bolt (Motion 1, Divide 1) at the dummy ahead and cast twice. PC: aim with the mouse and left click. Mobile: touch the right side. The blue bar is mana. Practice spells never change your saved four."
+          "Fire a bolt",
+          "Aim at the dummy and left click. Hit it twice."
         ],
         [
-          "Bind: block with a wall",
-          "Slot 1 is now a Stone wall (a wall with Bind 3). Raise it between you and the dummy and block one shot. Walls also stop your own body and spells. Move behind it with WASD / the left side."
+          "Block with a wall",
+          "The dummy fires back. Raise a wall in between and block one shot."
         ],
         [
           "Add a principle",
-          "Open the forge, put at least 1 point into Bind on your bolt in slot 1 and confirm. Hit the dummy with it. Bind ties what it touches to the vessel's center — for a bolt, to you."
+          "Open the forge, put points into Binding on your bolt and confirm. Fire it and hit the dummy."
         ],
         [
           "Change the vessel",
-          "In the forge, change slot 1's vessel to Orbit, confirm and cast. The same principles become blades circling you. The vessel changes, the principles keep their meaning."
+          "In the forge, change slot 1 to Orbit and confirm. Fire to make blades circle you."
         ],
         [
-          "Divide: break the wall",
-          "The dummy put up a wall. In the forge, raise Divide on your bolt to 2 or more and fire. Divide carves structures. The strike that breaks a wall still stops there, so fire again."
+          "Break the wall",
+          "The dummy raised a wall. In the forge, set your bolt's Division to 2 or more and fire."
         ],
         [
           "Chain stages",
-          "In the forge, press \"Add stage\" and make your bolt open a field in stage 2 \"On touch\". Put points into the field too and hit the moving dummy."
+          "In the forge, add a stage. Make a spell where the bolt opens a field on touch, and hit the dummy."
         ],
         [
-          "Observe, rebuild, fight again",
-          "On the battlefield, watch foes' spells and lines of fire. Try Divide or Phase against walls, sidestepping against seekers, rays or Solid against barriers. Refill mana from essence or nodes. Edit spells in the training hall or before entering. Practice spells are restored here."
+          "To the battlefield",
+          "On the battlefield, read your foe's spell and rearrange yours. Recover mana by picking up essence."
+        ]
+      ],
+      "demo": [
+        [
+          "Intro",
+          "Magic is built from three parts",
+          "Vessel (shape), principle (effect) and stage (link). Combined, they make a spell. Let us show each one in action."
+        ],
+        [
+          "Vessel",
+          "Bolt",
+          "A lump of mana that flies to your aim. The basic attack."
+        ],
+        [
+          "Vessel",
+          "Ray",
+          "Light that stretches instantly and pierces everything in line. Heavy, but it reaches far."
+        ],
+        [
+          "Vessel",
+          "Wall",
+          "A wall that stands in front of you. It cuts lines of fire, and stops your own bolts too."
+        ],
+        [
+          "Vessel",
+          "Field",
+          "A field that opens at your feet. Area attacks, traps, barriers and healing."
+        ],
+        [
+          "Vessel",
+          "Mantle",
+          "Wear it on your own body: speed, hardening, regeneration, cloaking."
+        ],
+        [
+          "Vessel",
+          "Orbit",
+          "Blades that circle you. They cut those who approach and catch incoming bolts."
+        ],
+        [
+          "Principle",
+          "Motion: push",
+          "Bolts fly faster and push what they hit."
+        ],
+        [
+          "Principle",
+          "Division: break",
+          "It chips walls and barriers. With more points, even solid walls fall."
+        ],
+        [
+          "Principle",
+          "Binding: tether",
+          "Ties what it touches to the vessel's center. For a bolt, it pulls the target toward you."
+        ],
+        [
+          "Principle",
+          "Conversion: drain",
+          "Steals mana from what it hits and returns it to you. Watch the blue bar on the left."
+        ],
+        [
+          "Principle",
+          "Growth: multiply",
+          "The bolt fans out into more. Each one is lighter, but the total grows."
+        ],
+        [
+          "Principle",
+          "Phase: pass through",
+          "With more Phase points than the wall's Binding points, you pass right through."
+        ],
+        [
+          "Chaining",
+          "Chain stages",
+          "When the bolt touches, the next stage (a field) opens. Stack vessels and principles into one spell."
+        ],
+        [
+          "Chaining",
+          "Conditions for the next stage",
+          "On touch, when spent, on signal, when broken. Here: a bolt that splits mid-flight."
+        ],
+        [
+          "Expansion",
+          "Matter: energy and solid",
+          "Energy is fast but fades at range. Solid is slow and heavy, and does not fade."
+        ],
+        [
+          "Expansion",
+          "Size and duration",
+          "Bigger hits harder but costs more mana. Duration is how long fields and walls last."
+        ],
+        [
+          "Expansion",
+          "Trajectory",
+          "Seeking curves, returning comes back, arcing flies over walls and drops."
+        ],
+        [
+          "Expansion",
+          "Thread and signal",
+          "With a thread you can detonate on demand with the F key. It costs upkeep."
+        ],
+        [
+          "End",
+          "That is how it works",
+          "Pick a preset in the spell forge and rearrange it. Try the tutorial to practice by hand."
         ]
       ],
       "example": "A bolt with only Motion is fast and pushes. Add Divide and it breaks; add Bind and it chains the foe to you. The same points on a field cover an area; on a mantle they dwell in your body. Chain \"a bolt that opens a field on touch\" and you have a burst orb. Principles decide what happens; vessels and stages decide how you use it."
@@ -1380,6 +1498,22 @@ LANG.zh = {
     "上の「術式台」ボタン": "上方的「术式台」按钮",
     "修練場に残る": "留在修炼场",
     "手ほどきを終える": "结束教学",
+    "手ほどきの途中": "教学进行中",
+    "やめるときは「手ほどきを終える」を押す": "要退出请按「结束教学」",
+    "術式台を開く（T）": "打开术式台（T）",
+    "「決定」ボタンで閉じる": "点「确定」按钮关闭",
+    "左クリックで撃つ": "左键发射",
+    "再生": "播放",
+    "一時停止": "暂停",
+    "まず実演で魔法の仕組みを見て、そのあと自分で試そう。": "先观看演示了解魔法的原理，再亲自尝试。",
+    "見て学ぶ": "观看学习",
+    "操作して学ぶ": "动手学习",
+    "はじめに": "开始",
+    "前へ": "上一步",
+    "次へ": "下一步",
+    "操作して試す": "亲自试试",
+    "終了": "结束",
+    "実演で見る": "观看演示",
     "結界の外で構造が崩れた": "在结界外结构崩坏",
     "{0}・計 {1} pt": "{0}·共 {1} pt",
     "表示で問題が起きた": "画面出现问题",
@@ -2465,32 +2599,134 @@ LANG.zh = {
       ],
       "tutorial": [
         [
-          "动与分：放出弹",
-          "用1号的魔弹（动1·分1的弹）瞄准前方的人偶，施放2次。PC 用鼠标瞄准左键施放，手机触摸右侧。蓝条是魔力。练习用的术不会改变你保存的4个术。"
+          "发射弹",
+          "瞄准人偶并点击左键。命中两次。"
         ],
         [
-          "结：用墙防御",
-          "1号换成了石墙（结3的墙）。瞄准你与人偶之间立起墙，挡下1次弹。墙也会挡住自己的身体与术。用 WASD／左侧操作移到墙后。"
+          "用墙防御",
+          "人偶会开火。在中间立起墙，挡下一发。"
         ],
         [
           "添加原理",
-          "打开术式台，为1号弹的「结」分配至少1点并确定。用它命中人偶。「结」会把触及之物连向器的中心——弹的话就是你自己。"
+          "打开术式台，为弹的「结」分配点数并确定。发射并命中人偶。"
         ],
         [
           "更换器",
-          "在术式台把1号的器换成「环」，确定后施放。同样的原理会化为绕你旋转的刃。换了器，原理的意义不变。"
+          "在术式台把1号的器换成「环」并确定。发射后刃会绕身旋转。"
         ],
         [
-          "分：击碎墙",
-          "前方的人偶立起了墙。在术式台把1号弹的「分」提高到2点以上并发射。「分」会削弱结构。击碎墙的那一击仍会被墙挡下，所以再射一次。"
+          "击破墙",
+          "人偶立起了墙。在术式台把弹的「分」设为2点以上并发射。"
         ],
         [
-          "连接段",
-          "在术式台按「添加段」，让1号弹「触及时」展开第2段的场。也为场分配原理，命中移动的人偶。"
+          "连接各段",
+          "在术式台添加一段。做出弹触及时展开场的术，并命中人偶。"
         ],
         [
-          "观察、重组、再战",
-          "在战场观察对手的术与射线。对墙试试「分」或「相」，对追踪试试侧移，对结界试试光线或固体。用魔素或节点补充魔力。术式可在修炼场或进场前编辑。练习用的术会在这里恢复原样。"
+          "前往战场",
+          "战场上观察对手的术并重新组合。拾取魔素来补充魔力。"
+        ]
+      ],
+      "demo": [
+        [
+          "开始",
+          "魔法由三部分组成",
+          "器（形状）、原理（作用）、段（连接）。三者组合成术。接下来逐一演示。"
+        ],
+        [
+          "器",
+          "弹",
+          "飞向瞄准处的魔力团。基本攻击。"
+        ],
+        [
+          "器",
+          "线",
+          "瞬间伸出的光，贯穿一线上的对手。负荷重但射程远。"
+        ],
+        [
+          "器",
+          "墙",
+          "立在正前方的墙。挡住射线，自己的弹也会被挡。"
+        ],
+        [
+          "器",
+          "场",
+          "在脚下展开的场。可作范围攻击、陷阱、结界、治疗。"
+        ],
+        [
+          "器",
+          "缠",
+          "寄宿在自己身上：加速、硬化、再生、隐身。"
+        ],
+        [
+          "器",
+          "环",
+          "绕身旋转的刃。斩击靠近的对手，也能挡下飞来的弹。"
+        ],
+        [
+          "原理",
+          "运动：推",
+          "弹飞得更快，并推开被命中的对手。"
+        ],
+        [
+          "原理",
+          "分解：破坏",
+          "削弱墙与结界。点数越多，坚固的墙也能击溃。"
+        ],
+        [
+          "原理",
+          "结合：连接",
+          "把触及之物拉向器的中心（弹的话就是自己）。"
+        ],
+        [
+          "原理",
+          "转换：夺取",
+          "从命中的对手身上夺取魔力还给自己。注意左边的蓝条。"
+        ],
+        [
+          "原理",
+          "增殖：增加",
+          "弹呈扇形增多。单发变轻，但总量增加。"
+        ],
+        [
+          "原理",
+          "相位：穿过",
+          "相位点数多于墙的结合点数时，可直接穿墙。"
+        ],
+        [
+          "连接",
+          "连接各段",
+          "弹触及时，下一段（场）展开。把器与原理叠成一个术。"
+        ],
+        [
+          "连接",
+          "进入下一段的条件",
+          "触及时、耗尽时、信号时、破坏时。示例：飞行中分裂的弹。"
+        ],
+        [
+          "扩展",
+          "质：能量与固体",
+          "能量快但远处易散。固体慢而沉重，不易衰减。"
+        ],
+        [
+          "扩展",
+          "大小与持续",
+          "越大越强，魔力消耗也越多。持续是场和墙留存的时间。"
+        ],
+        [
+          "扩展",
+          "轨道",
+          "追踪会转弯，回归会飞回，抛物线能越过墙落下。"
+        ],
+        [
+          "扩展",
+          "丝线与信号",
+          "接上丝线后，可按 F 键随时引爆。需要维持费。"
+        ],
+        [
+          "结束",
+          "原理就是这些",
+          "从术式台的范例中挑选并重新组合吧。想亲手练习，请进入教学。"
         ]
       ],
       "example": "只有「动」的弹快而会推。加上「分」就会破坏，加上「结」就会把对手连向自己。同样的点数放在场上就成为范围，放在缠上就寄宿于身体。连接「弹触及时展开场」就是爆裂球。原理决定「做什么」，器与段决定「怎么用」。"
@@ -2605,6 +2841,22 @@ LANG.ko = {
     "上の「術式台」ボタン": "위의 「술식대」 버튼",
     "修練場に残る": "수련장에 남기",
     "手ほどきを終える": "튜토리얼 종료",
+    "手ほどきの途中": "튜토리얼 진행 중",
+    "やめるときは「手ほどきを終える」を押す": "그만두려면 「튜토리얼 종료」를 누른다",
+    "術式台を開く（T）": "술식대 열기 (T)",
+    "「決定」ボタンで閉じる": "「결정」 버튼으로 닫기",
+    "左クリックで撃つ": "왼쪽 클릭으로 발사",
+    "再生": "재생",
+    "一時停止": "일시정지",
+    "まず実演で魔法の仕組みを見て、そのあと自分で試そう。": "먼저 시연으로 마법의 원리를 보고, 직접 시험해 보자.",
+    "見て学ぶ": "보며 배우기",
+    "操作して学ぶ": "해 보며 배우기",
+    "はじめに": "시작",
+    "前へ": "이전",
+    "次へ": "다음",
+    "操作して試す": "직접 해 보기",
+    "終了": "종료",
+    "実演で見る": "시연 보기",
     "結界の外で構造が崩れた": "결계 밖에서 구조가 무너졌다",
     "{0}・計 {1} pt": "{0} · 합계 {1} pt",
     "表示で問題が起きた": "화면에 문제가 생겼다",
@@ -3732,32 +3984,134 @@ LANG.ko = {
       ],
       "tutorial": [
         [
-          "동과 분: 탄을 쏜다",
-          "1번 마탄(동1·분1의 탄)으로 앞의 인형을 조준해 2번 쏘자. PC는 마우스로 조준해 왼쪽 클릭, 스마트폰은 오른쪽을 터치. 파란 막대가 마력. 연습용 술은 저장한 네 술을 바꾸지 않는다."
+          "탄을 쏜다",
+          "인형에 조준하고 왼쪽 클릭. 두 번 맞히자."
         ],
         [
-          "결: 벽으로 막는다",
-          "1번을 돌벽(결3의 벽)으로 바꿨다. 인형과의 사이를 조준해 벽을 세우고 탄을 한 번 막자. 벽은 자신의 몸과 술도 막는다. WASD/왼쪽 조작으로 벽 뒤로 움직일 수 있다."
+          "벽으로 막는다",
+          "인형이 쏜다. 사이에 벽을 세워 한 발을 막자."
         ],
         [
           "원리를 더한다",
-          "술식대를 열고 1번 탄의 「결」에 1점 이상을 주고 결정. 그 탄을 인형에 맞히자. 「결」은 닿은 상대를 그릇의 중심(탄이면 자신)에 묶는다."
+          "술식대를 열고 탄의 「결」에 점을 주고 결정. 쏘아서 인형에 맞히자."
         ],
         [
           "그릇을 바꾼다",
-          "술식대에서 1번의 그릇을 「고리」로 바꾸고 결정해 쏘자. 같은 원리가 자신 주위를 도는 칼날이 된다. 그릇이 바뀌어도 원리의 뜻은 변하지 않는다."
+          "술식대에서 1번 그릇을 「고리」로 바꾸고 결정. 쏘면 칼날이 몸 둘레를 돈다."
         ],
         [
-          "분: 벽을 무너뜨린다",
-          "앞의 인형이 벽을 세웠다. 술식대에서 1번 탄의 「분」을 2점 이상으로 올려 쏘자. 「분」은 구조를 깎는다. 부순 일격은 벽에서 멈추므로 한 번 더 쏜다."
+          "벽을 부순다",
+          "인형이 벽을 세웠다. 술식대에서 탄의 「분」을 2점 이상으로 하고 쏘자."
         ],
         [
           "단을 잇는다",
-          "술식대에서 「단 추가」를 누르고, 1번 탄이 「닿으면」 2단의 영역이 열리는 술을 만들자. 영역에도 원리를 주고 움직이는 인형에 맞히자."
+          "술식대에서 단을 추가한다. 탄이 닿으면 영역이 열리는 술을 만들어 맞히자."
         ],
         [
-          "관찰하고, 다시 짜고, 다시 싸운다",
-          "전장에서는 상대의 술과 사선을 본다. 벽에는 「분」이나 「상」을, 추적에는 옆 이동을, 결계에는 광선이나 고체를 시험하자. 마력은 마소를 줍거나 절점에서 보충한다. 술식 편집은 수련장이나 입장 전에. 연습용 술은 여기서 원래대로 돌아간다."
+          "전장으로",
+          "전장에서는 상대의 술을 보고 다시 짜서 싸운다. 마력은 마소를 주워 채운다."
+        ]
+      ],
+      "demo": [
+        [
+          "시작",
+          "마법은 세 가지로 짠다",
+          "그릇(형태), 원리(작용), 단(이음). 셋을 조합해 술이 된다. 이제 하나씩 시연한다."
+        ],
+        [
+          "그릇",
+          "탄",
+          "조준한 곳으로 날아가는 마력 덩어리. 기본 공격."
+        ],
+        [
+          "그릇",
+          "광선",
+          "순식간에 뻗는 빛. 늘어선 상대를 꿰뚫는다. 무겁지만 멀리 닿는다."
+        ],
+        [
+          "그릇",
+          "벽",
+          "정면에 서는 벽. 사선을 끊는다. 내 탄도 막힌다."
+        ],
+        [
+          "그릇",
+          "영역",
+          "발밑에 여는 장. 범위 공격, 함정, 결계, 회복이 된다."
+        ],
+        [
+          "그릇",
+          "두름",
+          "자기 몸에 깃든다. 가속, 경화, 재생, 은신."
+        ],
+        [
+          "그릇",
+          "고리",
+          "몸 둘레를 도는 칼날. 다가오는 상대를 베고 날아오는 탄을 막는다."
+        ],
+        [
+          "원리",
+          "운동: 민다",
+          "탄이 빨리 날고, 맞은 상대를 민다."
+        ],
+        [
+          "원리",
+          "분해: 부순다",
+          "벽과 결계를 깎는다. 점이 많을수록 단단한 벽도 무너진다."
+        ],
+        [
+          "원리",
+          "결합: 잇는다",
+          "닿은 상대를 그릇의 중심(탄이면 자신)으로 끌어당긴다."
+        ],
+        [
+          "원리",
+          "변환: 빼앗는다",
+          "맞힌 상대의 마력을 빼앗아 자신에게 돌린다. 왼쪽 파란 막대를 보자."
+        ],
+        [
+          "원리",
+          "증식: 늘린다",
+          "탄이 부채꼴로 늘어난다. 한 발은 가벼워지지만 합계는 늘어난다."
+        ],
+        [
+          "원리",
+          "위상: 빠져나간다",
+          "위상 점이 벽의 결합 점보다 많으면 벽을 통과한다."
+        ],
+        [
+          "잇기",
+          "단을 잇는다",
+          "탄이 닿으면 다음 단(영역)이 열린다. 그릇과 원리를 겹쳐 하나의 술로 만든다."
+        ],
+        [
+          "잇기",
+          "다음 단으로 넘어가는 조건",
+          "닿으면・다하면・신호로・부서지면. 예: 날아가다 갈라지는 탄."
+        ],
+        [
+          "확장",
+          "질: 에너지와 고체",
+          "에너지는 빠르지만 멀리서 흩어진다. 고체는 느리고 무거우며 쇠하지 않는다."
+        ],
+        [
+          "확장",
+          "크기와 지속",
+          "클수록 강하지만 마력도 늘어난다. 지속은 영역과 벽이 남는 시간."
+        ],
+        [
+          "확장",
+          "궤도",
+          "추적은 휘고, 회귀는 돌아오고, 포물선은 벽을 넘어 떨어진다."
+        ],
+        [
+          "확장",
+          "실과 신호",
+          "실을 이으면 F 키 신호로 원할 때 기폭할 수 있다. 유지비가 든다."
+        ],
+        [
+          "끝",
+          "원리는 여기까지",
+          "술식대의 작례에서 골라 다시 짜 보자. 직접 해 보려면 튜토리얼로."
         ]
       ],
       "example": "「동」만 있는 탄은 빠르게 민다. 「분」을 더하면 부수고, 「결」을 더하면 상대를 자신에게 묶는다. 같은 점수를 영역에 주면 범위가 되고, 두름에 주면 몸에 깃든다. 「탄이 닿으면 영역을 연다」로 단을 이으면 폭렬구. 원리는 「무엇을 하는가」, 그릇과 단은 「어떻게 쓰는가」를 정한다."

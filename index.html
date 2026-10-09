@@ -55,6 +55,20 @@
         <button id="tutorSkip" type="button" class="link">手ほどきを終える</button>
       </div>
     </section>
+    <!-- 見て学ぶ：術が自動で放たれる実演。操作は要らない -->
+    <section id="demo" class="tutor demo" hidden aria-live="polite">
+      <p class="tutor-count"><span id="demoCount">1 / 20</span>　<span id="demoChapter">はじめに</span></p>
+      <h2 id="demoTitle" class="tutor-title"></h2>
+      <p id="demoText" class="tutor-text"></p>
+      <div class="tutor-bar"><i id="demoBar"></i></div>
+      <div class="tutor-actions demo-actions">
+        <button id="demoPrev" type="button" class="link">前へ</button>
+        <button id="demoPause" type="button" class="link">一時停止</button>
+        <button id="demoNext" type="button" class="link">次へ</button>
+        <button id="demoGo" type="button" class="join small" hidden>操作して試す</button>
+        <button id="demoEnd" type="button" class="link">終了</button>
+      </div>
+    </section>
     <p id="hints" class="hints" hidden></p>
     <div id="toast" class="toast" aria-live="polite"></div>
 
@@ -111,8 +125,9 @@
       </header>
 
       <div id="welcome" class="welcome" hidden>
-        <p><b>はじめての方へ</b>　魔弾を放つ、壁で防ぐ、原理に点を振る、器を替える、段をつなぐ。修練場で魔法の仕組みを試そう。</p>
-        <button id="tutorStart" type="button" class="join small">手ほどきを始める</button>
+        <p><b>はじめての方へ</b>　まず実演で魔法の仕組みを見て、そのあと自分で試そう。</p>
+        <button id="demoStart" type="button" class="join small">見て学ぶ</button>
+        <button id="tutorStart" type="button" class="join small ghost">操作して学ぶ</button>
       </div>
 
       <div class="field">
@@ -142,6 +157,7 @@
       <p class="note">戦場の参加者はいまはBotです。オンライン対戦は準備中。</p>
       <nav class="links">
         <button id="howBtn" type="button" class="link">遊び方</button>
+        <button id="demoLink" type="button" class="link">見て学ぶ</button>
         <button id="tutorLink" type="button" class="link">手ほどき</button>
         <button id="settingsBtn" type="button" class="link">設定（声・音・画面）</button>
       </nav>
@@ -324,7 +340,8 @@
       <h3>原理をつなぎ、使い方を変える</h3>
       <p id="howExample"></p>
       <details><summary>戦場のルールを詳しく読む</summary><ul id="howRules" class="how-rules"></ul></details>
-      <button id="howTutor" class="join small" type="button">魔法の手ほどきを始める</button>
+      <button id="howDemo" class="join small" type="button">実演で見る</button>
+      <button id="howTutor" class="join small ghost" type="button">魔法の手ほどきを始める</button>
       <button id="howClose" class="join" type="button">閉じる</button>
     </section>
   </div>

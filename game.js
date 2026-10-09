@@ -325,6 +325,13 @@ window.addEventListener('keydown', e => {
   if (e.repeat && !MOVE_KEYS.includes(e.code)) return;
   keys.add(e.code);
   if (!$('settings').hidden) { if (e.code === 'Escape') closeSettings(); return; }
+  if (demo.on) {
+    if (e.code === 'Escape') { endDemo(); leave(); }
+    else if (e.code === 'ArrowRight') demoGo(1);
+    else if (e.code === 'ArrowLeft') demoGo(-1);
+    else if (e.code === 'Space') { e.preventDefault(); demoPause(); }
+    return;
+  }
   if (forge.open) { if (e.code === 'Escape' || e.code === 'KeyT') closeForge(); return; }
   if (e.code === 'KeyT' && canForge()) { openForge(mode === 'play' ? heroSlot : 0); return; }
   if (mode === 'play') {
@@ -334,7 +341,8 @@ window.addEventListener('keydown', e => {
     // 糸：F で指示起爆、G で回収
     if (e.code === 'KeyF' && me) me.input.detonate = true;
     if (e.code === 'KeyG' && me) me.input.recall = true;
-    if (e.code === 'Escape') leave();
+    // 手ほどき中の Esc は術式台を閉じるだけ。うっかり修練場から出て手ほどきが消えないようにする
+    if (e.code === 'Escape') { if (tutor.on) toast(L('手ほどきの途中'), L('やめるときは「手ほどきを終える」を押す')); else leave(); }
   } else if (mode === 'dead') {
     if (e.code === 'Space' || e.code === 'Enter') { e.preventDefault(); if (deathReady) join(); }
     if (e.code === 'Escape') toLobby();
@@ -4301,6 +4309,14 @@ function buildLobby() {
   $('voiceBtn').addEventListener('click', toggleVoice);
   $('tutorStart').addEventListener('click', startTutor);
   $('tutorLink').addEventListener('click', startTutor);
+  $('demoStart').addEventListener('click', startDemo);
+  $('demoLink').addEventListener('click', startDemo);
+  $('howDemo').addEventListener('click', () => { $('how').hidden = true; startDemo(); });
+  $('demoPrev').addEventListener('click', () => demoGo(-1));
+  $('demoNext').addEventListener('click', () => demoGo(1));
+  $('demoPause').addEventListener('click', demoPause);
+  $('demoEnd').addEventListener('click', () => { endDemo(); leave(); });
+  $('demoGo').addEventListener('click', startTutor);
   $('tutorSkip').addEventListener('click', () => endTutor(tutor.i === TUTOR.length - 1));
   $('tutorGo').addEventListener('click', () => { endTutor(true); leave(); join(); });
   buildSettings();
@@ -4619,6 +4635,7 @@ function setDraft(patch, soft = false) {
   renderForge(soft);
 }
 function openForge(slot = 0) {
+  if (demo.on) return;
   forge.slot = slot; forge.stage = 0;
   const me = world && S.hero(world);
   forge.draft = (tutor.on && me ? me.spells : profile.spells).map(r => S.normRecipe(r));
@@ -4845,14 +4862,14 @@ function join(roomKey) {
 // 実際に成立した術・命中・防御を条件に進める。操作しただけでは達成にならない
 const tutor = { on: false, i: 0, doneT: 0, s: null, rocks: null };
 const TUTOR = D.learning.tutorial.map(([title, text], i) => ({
-  title, text, keys: i >= 2 && i <= 5 ? [L('T で術式台'), L('決定 / Esc'), L('左クリック')] : [L('マウスで狙う'), L('左クリック')],
-  touch: i >= 2 && i <= 5 ? [L('上の「術式台」ボタン'), L('画面の右半分をタッチ')] : [L('画面の右半分をタッチ')],
+  title, text, keys: i === 6 ? [] : i >= 2 && i <= 5 ? [L('術式台を開く（T）'), L('「決定」ボタンで閉じる'), L('左クリックで撃つ')] : [L('マウスで狙う'), L('左クリック')],
+  touch: i === 6 ? [] : i >= 2 && i <= 5 ? [L('上の「術式台」ボタン'), L('「決定」ボタンで閉じる'), L('画面の右半分をタッチ')] : [L('画面の右半分をタッチ')],
   last: i === 6,
   done: [s => s.casts >= 2 && s.dealt > 0, s => s.blocked > 0, s => s.forged && s.connected && s.dealt > 0,
     s => s.forged && s.orbited, s => s.forged && s.divided && s.wall && s.wall.hp <= 0, s => s.forged && s.chained && s.dealt > 0][i]
 }));
 function startTutor() {
-  endTutor(false);
+  endTutor(false); endDemo();
   join('dojo');
   // 課題の射線をランダムな岩でふさがない。通常の修練場へ戻るときに復元する。
   tutor.rocks = world.rocks; world.rocks = [];
@@ -4936,24 +4953,150 @@ function renderTutor() {
   $('tutorSkip').textContent = st.last ? L('修練場に残る') : L('手ほどきを終える');
   if (st.last) { profile.tutorial = true; saveProfile(); }
 }
+// 手ほどき・実演で動かした修練場（人形・岩・術）を元へ戻す。退出したあとでも修練場の世界は残るので、いつでも戻す
+function restoreDojo(rocks) {
+  const w = worlds.dojo;
+  if (!w) return;
+  if (rocks) w.rocks = rocks;
+  w.practiceFire = false; w.spells = []; w.wards = []; w.zones = []; w.decoys = [];
+  const me = S.hero(w);
+  if (me) { me.spells = profile.spells.map(r => S.normRecipe(r)); me.casting = me.queue = null; me.input.cast = false; barKey = ''; }
+  for (const u of w.units) if (u.dummy) {
+    const d = D.dummies.find(d => d.kind === u.dummy);
+    u.alive = true; u.x = d.x; u.y = d.y; u.home = { x: d.x, y: d.y }; u.slotCd.fill(0);
+    u.spells = (d.spells ? d.spells.map(k => D.presets[k].r) : D.defaultSpells).map(r => S.normRecipe(r));
+  }
+}
 function endTutor(done) {
   const wasOn = tutor.on;
   if (wasOn && forge.open) closeForge();
   tutor.on = false; $('tutor').hidden = true;
   document.body.classList.remove('prima-tutorial');
-  if (wasOn && world && world.room.practice) {
-    if (tutor.rocks) world.rocks = tutor.rocks;
-    tutor.rocks = null;
-    world.practiceFire = false; world.spells = []; world.wards = []; world.zones = []; world.decoys = [];
-    const me = S.hero(world);
-    if (me) { me.spells = profile.spells.map(r => S.normRecipe(r)); me.casting = me.queue = null; barKey = ''; }
-    for (const u of world.units) if (u.dummy) {
-      const d = D.dummies.find(d => d.kind === u.dummy);
-      u.alive = true; u.x = d.x; u.y = d.y; u.home = { x: d.x, y: d.y }; u.slotCd.fill(0);
-      u.spells = (d.spells ? d.spells.map(k => D.presets[k].r) : D.defaultSpells).map(r => S.normRecipe(r));
-    }
-  }
+  if (wasOn) { restoreDojo(tutor.rocks); tutor.rocks = null; }
   if (done) { profile.tutorial = true; saveProfile(); }
+  syncWelcome();
+}
+// ─── 見て学ぶ：修練場で術を自動で放ち、場面ごとに説明する実演。操作は要らない ───
+// 説明文は D.learning.demo（同じ順）。ここは場面ごとの術と放つ時刻
+const demo = { on: false, i: 0, t: 0, paused: false, level: 0, rocks: null };
+const DEMO_DUR = 8;
+const dRC = (...stages) => ({ v: 3, stages });
+const dST = (vessel, p = {}, o = {}) => ({ vessel, p, ...o });
+const dp = k => D.presets[k].r;
+// sp：枠1〜の術、x：人形の位置、wall：人形が立てる壁、mp：魔力の初めの割合、
+// shots：放つ時刻（秒）または [時刻, 枠, 狙いx, 狙いy]、det：合図（F）の時刻
+const DEMO = [
+  { sp: [dp('burst')], shots: [1.5, 4.8] },
+  { sp: [dp('bolt')] },
+  { sp: [dp('ray')], shots: [1.4, 4.6] },
+  { sp: [dp('stoneWall'), dp('bolt')], shots: [[1, 0, 110, 0], [3.8, 1], [5.4, 1]] },
+  { sp: [dRC(dST('field', { divide: 2, motion: 1 }, { time: 1.2 }))], x: 70, shots: [1.2, 4.6] },
+  { sp: [dp('cloak'), dp('haste')], shots: [[1, 0], [5.4, 1]] },
+  { sp: [dp('bladeRing')], x: 45, shots: [1.2] },
+  { sp: [dRC(dST('bolt', { motion: 3 }))] },
+  { sp: [dRC(dST('bolt', { divide: 3 }))], wall: dp('stoneWall'), shots: [1.3, 2.6, 3.9, 5.2, 6.5] },
+  { sp: [dp('anchor')], shots: [1.2, 4.4] },
+  { sp: [dRC(dST('bolt', { convert: 2, divide: 1 }))], mp: .4, shots: [1.5, 3.2, 4.9] },
+  { sp: [dp('shotgun')] },
+  { sp: [dp('ghost')], wall: dRC(dST('wall', { bind: 1 })), shots: [1.5, 3.5, 5.5] },
+  { sp: [dp('well')], shots: [1.2, 4.6] },
+  { sp: [dp('cluster')], shots: [1.2, 4.4] },
+  { sp: [dp('bolt'), dp('lance')], shots: [[1.2, 0], [3.4, 1], [5.4, 1]] },
+  { sp: [dRC(dST('bolt', { divide: 1, motion: 1 }, { size: .6 })), dRC(dST('bolt', { divide: 2, motion: 2 }, { size: 2.8, matter: 'solid', look: 'spear' }))], shots: [[1.2, 0], [3.2, 0], [5.2, 1]] },
+  { sp: [dp('seeker'), dp('chakram'), dRC(dST('bolt', { divide: 1 }, { path: 'arc' }))], shots: [[1.2, 0], [3.8, 1], [6.2, 2]] },
+  { sp: [dp('remote')], shots: [1], det: [3.8] },
+  { sp: [dp('bolt')], shots: [] }
+];
+function startDemo() {
+  endTutor(false); endDemo();
+  join('dojo');
+  const me = S.hero(world);
+  // 射線を岩でふさがない。終わるときに元へ戻す
+  demo.rocks = world.rocks; world.rocks = [];
+  // 重い術も暴発させない
+  demo.level = me.level; me.level = 12;
+  $('toast').innerHTML = '';
+  demo.on = true; demo.i = 0; demo.t = 0; demo.paused = false;
+  document.body.classList.add('prima-tutorial');
+  prepareDemo(); renderDemo();
+}
+function prepareDemo() {
+  const me = S.hero(world), sc = DEMO[demo.i];
+  if (!me) return;
+  world.spells = []; world.wards = []; world.zones = []; world.decoys = [];
+  world.practiceFire = false;
+  me.x = 0; me.y = 0; me.vx = me.vy = 0; me.casting = me.queue = null;
+  me.slowT = me.rootT = me.phaseT = 0; me.slowAmt = 0; me.hp = me.maxHp; me.spawnShield = 0;
+  me.slotCd.fill(0); me.input.cast = false; me.input.mx = me.input.my = 0;
+  me.mp = S.maxMp(me) * (sc.mp || 1);
+  me.spells = [0, 1, 2, 3].map(k => S.normRecipe(sc.sp[k] || sc.sp[0]));
+  selectSlot(0); me.input.slot = 0; barKey = '';
+  const target = world.units.find(u => u.dummy === (sc.wall ? 'guard' : 'still'));
+  for (const u of world.units) if (u.dummy) u.alive = u === target;
+  if (!target) return;
+  target.x = 340; target.y = 0; target.vx = target.vy = 0; target.home = { x: 340, y: 0 };
+  target.casting = target.queue = null; target.slotCd.fill(0); target.hp = target.maxHp; target.spawnShield = 0;
+  target.slowT = target.rootT = target.phaseT = 0; target.slowAmt = 0;
+  if (sc.wall) {
+    // 人形が術者との間に壁を立てる（手ほどきの「壁を崩す」と同じ手順）
+    target.x = 170;
+    const prev = target.spells[0]; target.spells[0] = S.normRecipe(sc.wall);
+    target.input.aim = target.aim = Math.PI; target.input.tx = 110; target.input.ty = 0;
+    if (S.beginCast(world, target, 0)) { target.casting.t = target.casting.total; S.release(world, target); }
+    target.spells[0] = prev; target.x = 340;
+    const wall = world.wards.find(g => g.owner === target.id);
+    if (wall) { wall.hp = wall.max = 90; wall.life = 120; }
+    target.slotCd.fill(999);
+  }
+  target.x = sc.x || 340; target.home = { x: target.x, y: 0 };
+}
+// 毎フレーム、場面の時刻に合わせて術者の入力を書く（人の入力は使わない）
+function demoDrive(me) {
+  const ix = me.input, sc = DEMO[demo.i], t = demo.t;
+  const tg = world.units.find(u => u.dummy && u.alive), gx = tg ? tg.x : 340;
+  ix.mx = ix.my = 0; ix.cast = false;
+  me.mp = sc.mp ? Math.max(me.mp, S.maxMp(me) * .12) : S.maxMp(me);
+  ix.aim = Math.atan2(0 - me.y, gx - me.x); ix.tx = gx; ix.ty = 0;
+  if (demo.paused) return;
+  for (const sh of sc.shots || [1.2, 3.6, 6]) {
+    const [at, slot = 0, x = gx, y = 0] = Array.isArray(sh) ? sh : [sh];
+    if (t >= at && t < at + .3) { ix.cast = true; ix.slot = slot; ix.aim = Math.atan2(y - me.y, x - me.x); ix.tx = x; ix.ty = y; }
+  }
+  for (const at of sc.det || []) if (t >= at && t < at + .2) ix.detonate = true;
+}
+function demoTick(dt) {
+  if (!demo.on) return;
+  if (mode !== 'play' || !world.room.practice) { endDemo(); return; }
+  if (demo.paused) return;
+  demo.t += dt;
+  $('demoBar').style.width = `${Math.min(1, demo.t / DEMO_DUR) * 100}%`;
+  if (demo.t >= DEMO_DUR && demo.i < DEMO.length - 1) demoGo(1);
+}
+function demoGo(d) {
+  const j = Math.max(0, Math.min(DEMO.length - 1, demo.i + d));
+  if (!demo.on || j === demo.i) return;
+  demo.i = j; demo.t = 0; demo.paused = false;
+  prepareDemo(); renderDemo();
+}
+function demoPause() { demo.paused = !demo.paused; renderDemo(); }
+function renderDemo() {
+  const [chapter, title, text] = D.learning.demo[demo.i], last = demo.i === DEMO.length - 1;
+  $('demo').hidden = false;
+  $('demoCount').textContent = `${demo.i + 1} / ${DEMO.length}`;
+  $('demoChapter').textContent = chapter;
+  $('demoTitle').textContent = title; $('demoText').textContent = text;
+  $('demoBar').style.width = '0';
+  $('demoPrev').disabled = demo.i === 0;
+  $('demoNext').hidden = last; $('demoGo').hidden = !last;
+  $('demoPause').textContent = demo.paused ? L('再生') : L('一時停止');
+}
+function endDemo() {
+  if (!demo.on) return;
+  demo.on = false; $('demo').hidden = true;
+  document.body.classList.remove('prima-tutorial');
+  restoreDojo(demo.rocks); demo.rocks = null;
+  const me = worlds.dojo && S.hero(worlds.dojo);
+  if (me) me.level = demo.level;
   syncWelcome();
 }
 // ─── スペシャルステージ：位階ポイントが節目に達すると、その場で突然「演算の間」へ引き込まれる ───
@@ -5111,13 +5254,15 @@ function tick(dt) {
   const me = S.hero(world);
   if (mode === 'play' && me && me.alive) {
     if (window.PRIMA_AUTO && window.PRIMA_AUTO.enabled) window.PRIMA_AUTO.drive(world, me, dt);
+    else if (demo.on) demoDrive(me);
     else heroInput(me);
   }
   if (freeze > 0) freeze -= dt;
-  else if (!(forge.open && world.room.practice)) S.step(world, dt);
+  else if (!(forge.open && world.room.practice) && !(demo.on && demo.paused)) S.step(world, dt);
   consumeEvents();
   flightAudio();
   tutorTick(dt);
+  demoTick(dt);
   if (quitT > 0) quitT -= dt;
   checkSpecial();
   if (specialT > 0) { specialT -= dt; if (specialT <= 0) startSpecial(); }
